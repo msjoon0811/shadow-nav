@@ -77,7 +77,7 @@ def apply_shadow_weights(graph, shadow_geojson_path):
 
 def calculate_optimal_shadow_route(start_coords, end_coords, traffic_data):
     """
-    가중치가 부여된 맵에서 A->B 최적 경로를 다익스트라(Dijkstra)로 뽑는 메인 함수
+    가중치가 부여된 맵에서 A->B 최적 경로를 A*(A-Star) 알고리즘으로 뽑는 메인 함수
     """
     dummy_route = [{"lat": 37.5045, "lng": 127.0248}, {"lat": 37.4980, "lng": 127.0276}]
     return dummy_route

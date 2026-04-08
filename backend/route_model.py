@@ -63,11 +63,53 @@ def assign_basic_time_weights(graph, speed_kmh=4.0):
             
     return graph
 
-def train_comfort_model():
+def train_comfort_model(graph):
     """
-    머신러닝(Random Forest) 기반 쾌적지수 예측 모델 학습 파트
+    K-Means 클러스터링(비지도 학습)을 사용하여 길목들을 3개의 쾌적도 그룹으로 쪼갭니다.
     """
-    pass
+    import numpy as np
+    from sklearn.cluster import KMeans
+
+    print("🤖 머신러닝 AI (K-Means) 모델 학습 및 쾌적도 등급 분류 시작...")
+
+    edges = list(graph.edges(keys=True, data=True))
+    features = []
+    
+    # 1. 1232개 길목에서 학습용 데이터셋(Features) 추출
+    for u, v, k, data in edges:
+        shadow = data.get('shadow_percent', 0.0)
+        time = data.get('travel_time', 1.0)
+        features.append([shadow, time])
+        
+    X = np.array(features)
+
+    # 2. 비지도 학습 모델 구동 (알아서 3개 그룹으로 묶어라!)
+    kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+    labels = kmeans.fit_predict(X)
+    
+    # 3. 각 그룹의 특성을 파악하여 '1등급(훌륭)', '2등급(보통)', '3등급(최악)' 부여
+    cluster_shadow_means = []
+    for i in range(3):
+        # 각 그룹에 속해있는 도로들의 '그림자 비율' 평균값 계산
+        mean_shadow = X[labels == i, 0].mean() 
+        cluster_shadow_means.append((i, mean_shadow))
+        
+    # 그림자 평균이 높은 순서대로 정렬 (가장 그늘진 곳이 1등급)
+    cluster_shadow_means.sort(key=lambda x: x[1], reverse=True)
+    
+    grade_mapper = {}
+    grade = 1
+    for cluster_id, mean_val in cluster_shadow_means:
+        grade_mapper[cluster_id] = grade
+        grade += 1
+
+    # 4. 방금 AI가 판단한 쾌적도 등급을 지도 데이터베이스에 쾅쾅 도장 찍기
+    for idx, (u, v, k, data) in enumerate(edges):
+        comfort_grade = grade_mapper[labels[idx]]
+        data['comfort_grade'] = comfort_grade
+        
+    print("✅ AI 모델링 완료! (1등급: 그늘 짱짱함 ~ 3등급: 심각한 땡볕)")
+    return graph
 
 def extract_shadow_features(graph, shadow_geojson_path):
     """
@@ -137,5 +179,9 @@ if __name__ == "__main__":
     
     G_walk = extract_shadow_features(G_walk, shadow_test_file)
     print("✅ 3단계 완벽 성공! 1232개 도로가 몇 %나 그늘진 상태인지 AI 변수(shadow_percent) 장착을 완료했습니다.")
+    
+    # --- 4단계(머신러닝) 추가 부분 ---
+    G_walk = train_comfort_model(G_walk)
+    print("🎉 대성공: 머신러닝을 이용해 모든 도로의 쾌적도 등급 판별이 끝났습니다!")
     # -------------------
 

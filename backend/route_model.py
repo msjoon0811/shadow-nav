@@ -153,12 +153,52 @@ def extract_shadow_features(graph, shadow_geojson_path):
             
     return graph
 
-def calculate_optimal_shadow_route(start_coords, end_coords, traffic_data):
+def calculate_optimal_shadow_route(graph, start_coords, end_coords):
     """
     가중치가 부여된 맵에서 A->B 최적 경로를 A*(A-Star) 알고리즘으로 뽑는 메인 함수
     """
-    dummy_route = [{"lat": 37.5045, "lng": 127.0248}, {"lat": 37.4980, "lng": 127.0276}]
-    return dummy_route
+    print("🧭 A* 알고리즘 길찾기 엔진 가동 (땡볕 패널티 적용)...")
+    import networkx as nx
+    import osmnx as ox
+
+    # 1. AI 쾌적 등급(comfort_grade)에 따른 패널티(가중치) 부여
+    # 1등급(시원함) = 패널티 1.0 (우대)
+    # 2등급(보통) = 패널티 1.5 (길이가 1.5배 길게 느껴짐)
+    # 3등급(땡볕) = 패널티 3.0 (길이가 3배 길게 느껴짐, 회피 유도)
+    for u, v, k, data in graph.edges(keys=True, data=True):
+        grade = data.get('comfort_grade', 3)
+        time = data.get('travel_time', 1.0)
+        
+        if grade == 1: penalty = 1.0
+        elif grade == 2: penalty = 1.5
+        else: penalty = 3.0
+            
+        # 실제 걸리는 시간 * 패널티 = A* 알고리즘용 속임수 점수
+        data['routing_cost'] = time * penalty
+
+    # 2. 가장 가까운 출발지/도착지 점(Node) 찾기 (OSMnx는 X=경도, Y=위도)
+    start_y, start_x = start_coords
+    end_y, end_x = end_coords
+    
+    start_node = ox.distance.nearest_nodes(graph, X=start_x, Y=start_y)
+    end_node = ox.distance.nearest_nodes(graph, X=end_x, Y=end_y)
+
+    # 3. A* 알고리즘으로 최적 경로 탐색 (기준: routing_cost가 가장 적은 길)
+    try:
+        route_nodes = nx.astar_path(graph, start_node, end_node, weight='routing_cost')
+    except nx.NetworkXNoPath:
+        print("❌ 에러: 출발지와 도착지를 연결하는 길이 없습니다.")
+        return []
+
+    # 4. 구해진 노드 번호들을 위도/경도 리스트로 변환 (프론트 통신용)
+    route_coords = []
+    for node_id in route_nodes:
+        y = graph.nodes[node_id]['y']
+        x = graph.nodes[node_id]['x']
+        route_coords.append({"lat": y, "lng": x})
+        
+    print(f"🏁 최적 경로 탐색 완료! (총 {len(route_coords)}개의 교차로를 거쳐갑니다)")
+    return route_coords
 
 # 직접 이 파이썬 파일을 실행했을 때만 테스트 코드가 돕니다!
 if __name__ == "__main__":
@@ -183,5 +223,16 @@ if __name__ == "__main__":
     # --- 4단계(머신러닝) 추가 부분 ---
     G_walk = train_comfort_model(G_walk)
     print("🎉 대성공: 머신러닝을 이용해 모든 도로의 쾌적도 등급 판별이 끝났습니다!")
+    
+    # --- 대망의 5단계(A* 길찾기) 추가 부분 ---
+    print("\n⏳ [5단계 피날레] 강남역 CGV -> 신논현역 교보문고 길찾기 시도 중...")
+    
+    start_point = (37.5015, 127.0263) # 강남역 근처
+    end_point = (37.5045, 127.0248)   # 신논현역 근처
+    
+    best_route = calculate_optimal_shadow_route(G_walk, start_point, end_point)
+    
+    print(f"📍 최종 프론트엔드로 쏴줄 응답(JSON) 샘플: \n {best_route[:2]} ... (총 {len(best_route)}개 좌표 생략)")
+    print("🏆 모든 데이터 파이프라인 엔진 완성!!!")
     # -------------------
 

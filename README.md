@@ -10,7 +10,7 @@
 
 팀원 간 개발 환경 통일을 위해 아래의 스택을 공식으로 사용합니다.
 
-*   **Frontend (웹 UI & 지도):** HTML5, CSS, Vanilla JS + **Leaflet.js** (가볍고 빠른 지도 렌더링)
+*   **Frontend (웹 UI & 지도):** HTML5, CSS, Vanilla JS + **카카오맵 API (Kakao Maps API)** (국내 지도/장소 검색 완벽 지원)
 *   **Backend (API & 서버):** Python + **FastAPI** (성능이 가장 빠르고 API 문서가 자동 생성되므로 데이터 넘기기 최적)
 *   **Data & Model (핵심 알고리즘):** GeoPandas, Shapely, Suncalc, **OSMnx** (보행망 탐색), NetworkX
 
@@ -28,7 +28,7 @@ graph TD
     classDef model fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:#fff;
 
     subgraph Github Repository
-        UI[Frontend<br>Leaflet Map + 시간 슬라이더 UI]:::frontend
+        UI[Frontend<br>카카오맵 + 시간/자전거 UI]:::frontend
         API_SERVER[Backend<br>FastAPI 웹 서버]:::backend
         MODEL[Data/Model<br>그늘 가중치 라우팅 알고리즘]:::model
         DB[(data/ 폴더<br>109장 그림자 GeoJSON)]:::precalc
@@ -55,8 +55,8 @@ graph TD
 본인의 폴더 외의 파일은 가급적 건드리지 않고 PR(Pull Request)을 통해 작업합니다.
 
 ### `frontend/` (팀원 A 전용)
-*   **역할:** 사용자 화면(UI) 및 Leaflet 맵 시각화
-*   **작업 포인트:** `index.html`에 지도를 띄우고, 시간 슬라이더를 통해 `data/` 안의 그림자 geojson을 실시간으로 렌더링. 백엔드의 FastAPI와 통신하여 파란색 경로 선분 뿌려주기.
+*   **역할:** 사용자 화면(UI) 및 카카오맵 기반 시각화
+*   **작업 포인트:** `index.html`에 카카오맵을 띄우고, 자전거 체크박스와 시간 슬라이더 UI 구현. 장소 검색 API(Local)를 통해 출발/도착지를 잡고, `data/` 안의 그림자와 백엔드의 경로를 지도에 오버레이.
 
 ### `backend/` (팀원 B, C 핵심 구역)
 *   **역할:** 외부 API 통신 및 코딩 두뇌 (FastAPI, Python)

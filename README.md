@@ -12,7 +12,7 @@
 
 *   **Frontend (웹 UI & 지도):** HTML5, CSS, Vanilla JS + **카카오맵 API (Kakao Maps API)** (국내 지도/장소 검색 완벽 지원)
 *   **Backend (API & 서버):** Python + **FastAPI** (성능이 가장 빠르고 API 문서가 자동 생성되므로 데이터 넘기기 최적)
-*   **Data & Model (핵심 알고리즘):** GeoPandas, Shapely, Suncalc, **OSMnx** (보행망 탐색), NetworkX
+*   **Data & Model (핵심 알고리즘):** GeoPandas, Shapely, Suncalc, **OSMnx** (보행망 탐색), **Scikit-learn** (머신러닝 쾌적지수 예측 모델)
 
 ---
 
@@ -30,7 +30,7 @@ graph TD
     subgraph Github Repository
         UI[Frontend<br>카카오맵 + 시간/자전거 UI]:::frontend
         API_SERVER[Backend<br>FastAPI 웹 서버]:::backend
-        MODEL[Data/Model<br>그늘 가중치 라우팅 알고리즘]:::model
+        MODEL[Data/Model<br>머신러닝 쾌적지수 예측 및 라우팅]:::model
         DB[(data/ 폴더<br>109장 그림자 GeoJSON)]:::precalc
     end
 
@@ -61,7 +61,7 @@ graph TD
 ### `backend/` (팀원 B, C 핵심 구역)
 *   **역할:** 외부 API 통신 및 코딩 두뇌 (FastAPI, Python)
 *   `app.py` **(팀원 C)**: FastAPI를 가동하여 프론트방과 모델방의 다리 역할을 수행. 공공데이터포털(신호등, 자전거) REST API 호출 및 데이터 파싱.
-*   `route_model.py` **(데이터 사이언티스트/본인)**: `OSMnx`로 보행그래픽스를 빌드하고 다익스트라(Dijkstra) 기반의 **그늘 점수 라우팅 알고리즘**을 개발하여 `app.py`에 납품.
+*   `route_model.py` **(데이터 사이언티스트/본인)**: `OSMnx`로 보행그래픽스를 빌드하고 머신러닝 기반의 **쾌적 지수 예측 점수(Comfort Index)**를 다익스트라(Dijkstra) 라우팅 알고리즘에 적용하여 `app.py`에 납품.
 
 ### `data/` (공통 자산 구역)
 *   폭염 기준일(8/1) 오전 9시~오후 6시 5분 간격 109장의 사전 시뮬레이션 그림자 데이터 및 3D 모델링 원본 등 프로젝트 에셋이 위치합니다.

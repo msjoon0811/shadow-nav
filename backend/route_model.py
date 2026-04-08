@@ -153,18 +153,63 @@ def apply_shadow_weights(G, shadow_gdf: gpd.GeoDataFrame):
             geom = LineString([(u_node["x"], u_node["y"]), (v_node["x"], v_node["y"])])
 
         shadow = _shadow_coverage_geojson(geom, shadow_gdf)
-        # 그늘이 많을수록 가중치 낮음 → 다익스트라가 선호
-        G[u][v][k]["shadow_weight"] = length * (1.0 - shadow * 0.8)
+        travel_time = data.get("travel_time", length / (4.0 * 1000 / 60))
+        # 그늘이 많을수록 가중치 낮음 → A*가 선호
+        G[u][v][k]["shadow_weight"] = travel_time * (1.0 - shadow * 0.8)
+
+    return G
+
+
+# ── 신호등 패널티 ──────────────────────────────────────────────────────────────
+
+_SIGNAL_RADIUS_DEG = 0.0002   # ~22m 이내 교차로에만 패널티 적용
+_SIGNAL_PENALTY_PER_SEC = 0.05  # 빨간불 1초 = 보행 50m 패널티 환산 (분 단위 가중치)
+
+
+def apply_signal_penalties(G, signal_data: list[dict]):
+    """
+    신호 대기시간이 긴 교차로 인근 엣지에 추가 패널티 부여.
+    signal_data: [{"lng", "lat", "red_remaining_sec"}, ...]
+    """
+    if not signal_data:
+        return G
+
+    for u, v, k, data in G.edges(data=True, keys=True):
+        u_node = G.nodes[u]
+        v_node = G.nodes[v]
+        mid_x = (u_node["x"] + v_node["x"]) / 2
+        mid_y = (u_node["y"] + v_node["y"]) / 2
+
+        max_penalty = 0.0
+        for sig in signal_data:
+            if (abs(mid_x - sig["lng"]) < _SIGNAL_RADIUS_DEG and
+                    abs(mid_y - sig["lat"]) < _SIGNAL_RADIUS_DEG):
+                penalty = sig.get("red_remaining_sec", 0) * _SIGNAL_PENALTY_PER_SEC
+                max_penalty = max(max_penalty, penalty)
+
+        if max_penalty > 0:
+            G[u][v][k]["shadow_weight"] = G[u][v][k].get("shadow_weight", data.get("length", 1.0)) + max_penalty
 
     return G
 
 
 # ── 메인 함수 ──────────────────────────────────────────────────────────────────
 
-def calculate_optimal_shadow_route(kakao_coords: list[dict], time_str: str) -> list[dict]:
+def calculate_optimal_shadow_route(
+    kakao_coords: list[dict],
+    time_str: str,
+    signal_data: list[dict] | None = None,
+    mode: str = "walk",
+) -> list[dict]:
     """
-    카카오 경로 좌표를 받아 그늘 가중치 기반 최적 경로를 반환.
+    카카오 경로 좌표를 받아 그늘 + 신호 패널티 기반 최적 경로를 반환.
     계산 실패 시 원본 카카오 경로를 그대로 반환 (fallback).
+
+    Args:
+        kakao_coords: 카카오 API에서 받은 좌표 리스트
+        time_str:     그림자 계산 시간 (HH:MM)
+        signal_data:  신호등 잔여시간 리스트 (없으면 패널티 미적용)
+        mode:         "walk" (걷기) / "bike" (걷기+따릉이, 속도 15 km/h)
     """
     if not kakao_coords:
         return kakao_coords
@@ -178,18 +223,34 @@ def calculate_optimal_shadow_route(kakao_coords: list[dict], time_str: str) -> l
     north, south = max(lats) + margin, min(lats) - margin
     east, west = max(lngs) + margin, min(lngs) - margin
 
+    speed_kmh = 15.0 if mode == "bike" else 4.0
+
     try:
         shadow_gdf = load_shadow_geojson(time_str)
 
         G = build_street_graph(north, south, east, west)
-        print(f"[shadow] 도로 엣지 {G.number_of_edges()}개 로드")
+        print(f"[shadow] 도로 엣지 {G.number_of_edges()}개 로드 (speed={speed_kmh} km/h)")
 
+        G = assign_basic_time_weights(G, speed_kmh=speed_kmh)
         G = apply_shadow_weights(G, shadow_gdf)
 
-        start_node = ox.distance.nearest_nodes(G, X=start["lng"], Y=start["lat"])
-        end_node = ox.distance.nearest_nodes(G, X=end["lng"], Y=end["lat"])
+        if signal_data:
+            G = apply_signal_penalties(G, signal_data)
+            print(f"[shadow] 신호등 패널티 {len(signal_data)}개 적용")
 
-        path_nodes = nx.shortest_path(G, start_node, end_node, weight="shadow_weight")
+        start_node = ox.distance.nearest_nodes(G, X=start["lng"], Y=start["lat"])
+        end_node   = ox.distance.nearest_nodes(G, X=end["lng"],   Y=end["lat"])
+
+        # A* 휴리스틱: 목적지까지의 직선 거리 (위경도 유클리드 근사)
+        end_x = G.nodes[end_node]["x"]
+        end_y = G.nodes[end_node]["y"]
+
+        def heuristic(u, _v):
+            dx = G.nodes[u]["x"] - end_x
+            dy = G.nodes[u]["y"] - end_y
+            return math.hypot(dx, dy) * 111_000  # 위도 1° ≈ 111km → 미터 환산
+
+        path_nodes = nx.astar_path(G, start_node, end_node, heuristic=heuristic, weight="shadow_weight")
 
         result = [
             {"lat": G.nodes[n]["y"], "lng": G.nodes[n]["x"]}

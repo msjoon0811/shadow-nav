@@ -4,31 +4,74 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shadow-Nav: 그늘길 내비게이션</title>
-    <!-- Leaflet 지도 CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="sidebar">
-        <h2>🌞 Shadow-Nav</h2>
-        <div class="control-group">
-            <label>출발지: <input type="text" id="start-node" placeholder="예: 신논현역"></label><br>
-            <label>도착지: <input type="text" id="end-node" placeholder="예: 강남역"></label><br>
-            <button onclick="findRoute()">그늘길 찾기</button>
+
+<div id="sidebar">
+    <div id="sidebar-header">
+        <span class="logo">&#9728;&#65039;</span>
+        <h1>Shadow-Nav</h1>
+        <p class="subtitle">가장 시원한 길을 찾아드립니다</p>
+    </div>
+
+    <!-- 장소 검색 -->
+    <div class="section">
+        <div class="input-row">
+            <span class="dot start-dot"></span>
+            <input type="text" id="input-start" placeholder="출발지 입력" autocomplete="off" />
         </div>
-        
-        <div class="control-group">
-            <label>시간대 시뮬레이션: <span id="time-display">12:00</span></label><br>
-            <input type="range" id="time-slider" min="9" max="18" step="0.5" value="12">
+        <div class="divider-line"></div>
+        <div class="input-row">
+            <span class="dot end-dot"></span>
+            <input type="text" id="input-end" placeholder="도착지 입력" autocomplete="off" />
         </div>
     </div>
-    
-    <!-- 지도가 그려질 영역 -->
-    <div id="map"></div>
 
-    <!-- Leaflet 지도 JS -->
-    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-    <!-- 팀원 A가 작성할 메인 로직 -->
-    <script src="app.js"></script>
+    <!-- 출발 시간 -->
+    <div class="section">
+        <label class="section-label">출발 시간</label>
+        <div class="time-row">
+            <button class="time-btn" id="btn-now" onclick="setNow()">지금</button>
+            <button class="time-adj" onclick="adjustTime(-5)">&#9664;</button>
+            <span id="time-display">12:00</span>
+            <button class="time-adj" onclick="adjustTime(+5)">&#9654;</button>
+            <input type="time" id="time-picker" step="300" />
+        </div>
+    </div>
+
+    <!-- 이동 수단 -->
+    <div class="section">
+        <label class="section-label">이동 수단</label>
+        <div class="mode-row">
+            <label class="mode-option">
+                <input type="radio" name="mode" value="walk" checked />
+                <span>&#127939; 걷기</span>
+            </label>
+            <label class="mode-option">
+                <input type="radio" name="mode" value="bike" />
+                <span>&#128690; 걷기+따릉이</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- 길찾기 버튼 -->
+    <button id="btn-route" onclick="findRoute()">그늘길 찾기</button>
+
+    <!-- 따릉이 대여소 목록 (자전거 모드) -->
+    <div id="ddareungi-panel" class="section hidden">
+        <label class="section-label">&#128690; 근처 따릉이 대여소</label>
+        <ul id="ddareungi-list"></ul>
+    </div>
+
+    <!-- 상태 메시지 -->
+    <div id="status-msg"></div>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

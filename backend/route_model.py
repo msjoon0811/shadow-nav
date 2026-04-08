@@ -93,6 +93,22 @@ def get_buildings(north: float, south: float, east: float, west: float) -> gpd.G
         return gpd.GeoDataFrame()
 
 
+# ── 이동 시간 가중치 ───────────────────────────────────────────────────────────
+
+def assign_basic_time_weights(graph, speed_kmh=4.0):
+    """
+    모든 도로(Edge)의 길이를 바탕으로 사람이 걷는 데 걸리는 기본 시간(분)을 계산해 부여.
+    (자전거인 경우 speed_kmh를 15로 주면 됩니다)
+    """
+    meters_per_minute = speed_kmh * 1000 / 60
+    for u, v, key, data in graph.edges(keys=True, data=True):
+        if 'length' in data:
+            data['travel_time'] = data['length'] / meters_per_minute
+        else:
+            data['travel_time'] = 0.0
+    return graph
+
+
 # ── 그늘 가중치 ────────────────────────────────────────────────────────────────
 
 def _shadow_coverage_geojson(geom: LineString, shadow_gdf: gpd.GeoDataFrame) -> float:
@@ -161,8 +177,6 @@ def calculate_optimal_shadow_route(kakao_coords: list[dict], time_str: str) -> l
     margin = 0.003  # ~330 m 여유
     north, south = max(lats) + margin, min(lats) - margin
     east, west = max(lngs) + margin, min(lngs) - margin
-    center_lat = (north + south) / 2
-    center_lng = (east + west) / 2
 
     try:
         shadow_gdf = load_shadow_geojson(time_str)

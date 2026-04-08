@@ -44,6 +44,24 @@ def build_street_graph():
         print(f"✅ 자전거 도로망 저장 완료! (노드: {len(G_bike.nodes)}, 자전거길: {len(G_bike.edges)}개)")
 
     return G_walk, G_bike
+def assign_basic_time_weights(graph, speed_kmh=4.0):
+    """
+    모든 도로(Edge)의 길이를 바탕으로 사람이 걷는 데 걸리는 기본 시간(초)을 계산해 부여합니다.
+    (자전거인 경우 speed_kmh를 15로 주면 됩니다)
+    """
+    meters_per_minute = speed_kmh * 1000 / 60
+    
+    # 그래프 안의 모든 길목(u, v, 데이터)을 하나씩 확인
+    for u, v, key, data in graph.edges(keys=True, data=True):
+        # 도로 길이가 정보에 있으면
+        if 'length' in data:
+            # 시간(분) = 거리(m) / 속도(m/m)
+            travel_time_min = data['length'] / meters_per_minute
+            data['travel_time'] = travel_time_min
+        else:
+            data['travel_time'] = 0.0 # 정보 없으면 예외구역
+            
+    return graph
 
 def train_comfort_model():
     """
@@ -66,8 +84,12 @@ def calculate_optimal_shadow_route(start_coords, end_coords, traffic_data):
 
 # 직접 이 파이썬 파일을 실행했을 때만 테스트 코드가 돕니다!
 if __name__ == "__main__":
-    print("-" * 50)
     print("🚀 [1단계 미션] 도로망 데이터 구축 테스트 시작")
     G_walk, G_bike = build_street_graph()
-    print("-" * 50)
-    print("🎉 테스트 완벽 성공! 도로망이 파일로 무사히 저장되었습니다.")
+    
+    # --- 추가된 부분 ---
+    print("⏳ [2단계 미션] 도로에 기본 걷는 시간(분) 부여 중...")
+    G_walk = assign_basic_time_weights(G_walk)
+    print("✅ 2단계 완벽 성공! 모든 골목길에 소요 시간이 입력되었습니다.")
+    # -------------------
+

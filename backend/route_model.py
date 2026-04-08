@@ -69,11 +69,47 @@ def train_comfort_model():
     """
     pass
 
-def apply_shadow_weights(graph, shadow_geojson_path):
+def extract_shadow_features(graph, shadow_geojson_path):
     """
-    도로와 그림자 지도의 교집합을 구해, 도로(Edge)에 쾌적성 점수를 부여하는 함수
+    특정 시간대의 그림자 파일을 로드하여, 1232개의 각 도로 선분이
+    그림자와 얼마나 겹치는지(%)를 계산하여 도로 변수에 저장합니다.
     """
-    pass
+    import os
+    from shapely.geometry import LineString
+    import geopandas as gpd
+
+    if not os.path.exists(shadow_geojson_path):
+        print(f"⚠️ 에러: {shadow_geojson_path} 파일을 찾을 수 없습니다.")
+        return graph
+
+    print(f"🌞 그림자 파일 로딩 중... ({os.path.basename(shadow_geojson_path)})")
+    shadows_gdf = gpd.read_file(shadow_geojson_path)
+    
+    # 파편화된 그림자 조각들을 연산 속도를 위해 거대한 하나의 덩어리로 합침
+    merged_shadow = shadows_gdf.geometry.unary_union
+
+    print("✂️ 1,232개 골목길 그림자 덮힘 면적 비율(%) 추출 중...")
+    
+    for u, v, key, data in graph.edges(keys=True, data=True):
+        if 'geometry' in data:
+            road_line = data['geometry']
+        else:
+            road_line = LineString([(graph.nodes[u]['x'], graph.nodes[u]['y']), 
+                                    (graph.nodes[v]['x'], graph.nodes[v]['y'])])
+            
+        road_length = road_line.length
+        if road_length == 0:
+            data['shadow_percent'] = 0.0
+            continue
+            
+        # 공간 교집합 연산 (이 도로는 그림자에 몇 m나 덮여 있나?)
+        intersect_line = road_line.intersection(merged_shadow)
+        
+        # 덮인 비율 = 덮인 길이 / 전체 도로 길이
+        ratio = intersect_line.length / road_length
+        data['shadow_percent'] = round(ratio, 3) 
+            
+    return graph
 
 def calculate_optimal_shadow_route(start_coords, end_coords, traffic_data):
     """
@@ -88,8 +124,18 @@ if __name__ == "__main__":
     G_walk, G_bike = build_street_graph()
     
     # --- 추가된 부분 ---
-    print("⏳ [2단계 미션] 도로에 기본 걷는 시간(분) 부여 중...")
+    print("\n⏳ [2단계 미션] 도로에 기본 걷는 시간(분) 부여 중...")
     G_walk = assign_basic_time_weights(G_walk)
     print("✅ 2단계 완벽 성공! 모든 골목길에 소요 시간이 입력되었습니다.")
+    # -------------------
+
+    # --- 3단계 추가 부분 ---
+    print("\n⏳ [3단계 미션] 도로와 그림자 교집합 AI 피처 추출 중...")
+    # 12시 정위 정각 그림자 데이터 테스트
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+    shadow_test_file = os.path.join(base_dir, "data", "shadow_data", "shadow_0801_1200.geojson")
+    
+    G_walk = extract_shadow_features(G_walk, shadow_test_file)
+    print("✅ 3단계 완벽 성공! 1232개 도로가 몇 %나 그늘진 상태인지 AI 변수(shadow_percent) 장착을 완료했습니다.")
     # -------------------
 

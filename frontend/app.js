@@ -1,6 +1,6 @@
 // Shadow-Nav 프론트엔드 메인 로직
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "http://localhost:8002";
 
 // ── 지도 초기화 ───────────────────────────────────────────────────────────────
 
@@ -16,7 +16,8 @@ let routeLayer    = null;   // 경로 폴리라인
 let shadowLayer   = null;   // 그림자 GeoJSON 오버레이
 let markerStart   = null;
 let markerEnd     = null;
-let bikeMarkers   = [];
+let bikeMarkers    = [];
+let signalMarkers  = [];
 
 // ── 시간 상태 ─────────────────────────────────────────────────────────────────
 
@@ -153,6 +154,27 @@ function renderBikeStations(stations) {
     panel.classList.toggle("hidden", stations.length === 0);
 }
 
+// ── 신호등 마커 ───────────────────────────────────────────────────────────────
+
+function renderSignals(signals) {
+    signalMarkers.forEach(m => map.removeLayer(m));
+    signalMarkers = [];
+
+    signals.forEach(s => {
+        const isRed = s.red_remaining_sec > 0;
+        const color = isRed ? "#e53935" : "#43a047";
+        const icon = L.divIcon({
+            className: "",
+            html: `<div style="width:22px;height:22px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;font-size:12px;">${isRed ? "🔴" : "🟢"}</div>`,
+            iconAnchor: [11, 11],
+        });
+        const m = L.marker([s.lat, s.lng], { icon })
+            .bindPopup(isRed ? `🔴 적색 잔여: ${s.red_remaining_sec}초` : "🟢 보행 가능")
+            .addTo(map);
+        signalMarkers.push(m);
+    });
+}
+
 // ── 메인 길찾기 ───────────────────────────────────────────────────────────────
 
 async function findRoute() {
@@ -214,15 +236,20 @@ async function findRoute() {
     if (routeLayer) map.removeLayer(routeLayer);
     const latlngs = data.route.map(c => [c.lat, c.lng]);
     routeLayer = L.polyline(latlngs, {
-        color:     "#2196f3",
-        weight:    5,
-        opacity:   0.85,
-        lineJoin:  "round",
+        color:       "#1565c0",
+        weight:      5,
+        opacity:     0.9,
+        lineJoin:    "round",
+        dashArray:   "10, 6",
+        dashOffset:  "0",
     }).addTo(map);
     map.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
 
     // 따릉이 대여소
     renderBikeStations(data.ddareungi_stations || []);
+
+    // 신호등
+    renderSignals(data.signal_data || []);
 
     setStatus(`경로 완료 — ${latlngs.length}개 노드`, "ok");
 }

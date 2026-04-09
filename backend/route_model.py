@@ -142,8 +142,12 @@ def _shadow_coverage_geojson(geom: LineString, shadow_gdf: gpd.GeoDataFrame) -> 
         return 0.0
 
 
+_FOOTWAY_TAGS = {"footway", "pedestrian", "path", "steps", "living_street"}
+_FOOTWAY_BONUS = 0.7  # 보도/인도 엣지는 가중치 30% 감소 → A*가 우선 선택
+
+
 def apply_shadow_weights(G, shadow_gdf: gpd.GeoDataFrame):
-    """각 도로 엣지에 shadow_weight 속성 추가 (그늘 많을수록 낮은 값)"""
+    """각 도로 엣지에 shadow_weight 속성 추가 (그늘 많을수록, 보도일수록 낮은 값)"""
     for u, v, k, data in G.edges(data=True, keys=True):
         length = data.get("length", 1.0)
 
@@ -154,8 +158,54 @@ def apply_shadow_weights(G, shadow_gdf: gpd.GeoDataFrame):
 
         shadow = _shadow_coverage_geojson(geom, shadow_gdf)
         travel_time = data.get("travel_time", length / (4.0 * 1000 / 60))
-        # 그늘이 많을수록 가중치 낮음 → A*가 선호
-        G[u][v][k]["shadow_weight"] = travel_time * (1.0 - shadow * 0.8)
+
+        # 보도/인도 태그 확인
+        highway = data.get("highway", "")
+        if isinstance(highway, list):
+            highway = highway[0] if highway else ""
+        is_footway = highway in _FOOTWAY_TAGS
+
+        base = travel_time * (1.0 - shadow * 0.8)
+        G[u][v][k]["shadow_weight"] = base * (_FOOTWAY_BONUS if is_footway else 1.0)
+
+    return G
+
+
+# ── 횡단보도 제약 ──────────────────────────────────────────────────────────────
+
+_CROSSING_RADIUS_DEG = 0.0003   # ~33m 이내 횡단보도 없으면 도로 횡단 페널티
+_MAJOR_ROAD_TAGS = {"primary", "secondary", "tertiary", "primary_link", "secondary_link", "tertiary_link"}
+_NO_CROSSING_PENALTY = 5.0      # 횡단보도 없는 도로 횡단 패널티 (분)
+
+
+def apply_crosswalk_constraints(G, crosswalk_nodes: list[dict]):
+    """
+    주요 도로 엣지 중 근처에 횡단보도 없는 경우 높은 패널티 부여.
+    crosswalk_nodes: [{"lat": float, "lng": float}, ...]
+    """
+    if not crosswalk_nodes:
+        return G
+
+    for u, v, k, data in G.edges(data=True, keys=True):
+        highway = data.get("highway", "")
+        if isinstance(highway, list):
+            highway = highway[0] if highway else ""
+        if highway not in _MAJOR_ROAD_TAGS:
+            continue
+
+        u_node = G.nodes[u]
+        v_node = G.nodes[v]
+        mid_x = (u_node["x"] + v_node["x"]) / 2
+        mid_y = (u_node["y"] + v_node["y"]) / 2
+
+        has_crossing = any(
+            abs(c["lng"] - mid_x) < _CROSSING_RADIUS_DEG and
+            abs(c["lat"] - mid_y) < _CROSSING_RADIUS_DEG
+            for c in crosswalk_nodes
+        )
+
+        if not has_crossing:
+            G[u][v][k]["shadow_weight"] = G[u][v][k].get("shadow_weight", data.get("length", 1.0)) + _NO_CROSSING_PENALTY
 
     return G
 
@@ -199,6 +249,7 @@ def calculate_optimal_shadow_route(
     kakao_coords: list[dict],
     time_str: str,
     signal_data: list[dict] | None = None,
+    crosswalk_nodes: list[dict] | None = None,
     mode: str = "walk",
 ) -> list[dict]:
     """
@@ -233,6 +284,10 @@ def calculate_optimal_shadow_route(
 
         G = assign_basic_time_weights(G, speed_kmh=speed_kmh)
         G = apply_shadow_weights(G, shadow_gdf)
+
+        if crosswalk_nodes:
+            G = apply_crosswalk_constraints(G, crosswalk_nodes)
+            print(f"[shadow] 횡단보도 제약 {len(crosswalk_nodes)}개 적용")
 
         if signal_data:
             G = apply_signal_penalties(G, signal_data)

@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:8002"; // 팀원분이 설정한 백엔드 포트
+const API_BASE = "http://localhost:8000";
 
 let map = null;
 let shadowPolygons = [];

@@ -299,7 +299,9 @@ async def fetch_traffic_signals(coords: list[dict]) -> list[dict]:
         return result
 
     except Exception as e:
+        import traceback
         print(f"[signal] 요청 실패 (라우팅은 계속): {e}")
+        traceback.print_exc()
         return []
 
 
@@ -356,6 +358,8 @@ async def fetch_ddareungi_stations(center_lat: float, center_lng: float) -> list
             else:
                 items = first_items
 
+        if items:
+            print(f"[ddareungi] 첫 번째 아이템 키: {list(items[0].keys())}")
         result = []
         for item in items:
             try:

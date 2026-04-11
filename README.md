@@ -51,4 +51,54 @@ graph TD
     classDef data fill:#9b59b6,stroke:#8e44ad,color:#fff;
 
     UI[Frontend<br>카카오맵 + UI]:::frontend
-    SERVER[Backend<br>
+    SERVER[Backend<br>FastAPI]:::backend
+    MODEL[Data/Model<br>AI 쾌적도 분류 및 A* 라우팅]:::model
+    DB[(data/ 폴더<br>그림자 GeoJSON 109장)]:::data
+    PUB((공공 API<br>전국 통합데이터 API)):::api
+    KAKAO((카카오 API<br>장소 텍스트 검색)):::api
+
+    UI -- 1. 장소 검색 요청 --> KAKAO
+    UI -- 2. 위경도 기준 길찾기 요청 --> SERVER
+    SERVER -- 3. 실시간 신호등 조회 --> PUB
+    PUB -- 응답 결과 --> SERVER
+    SERVER -- 4. 기상 정보 종합 전달 --> MODEL
+    DB -. 5. 그늘 가중치 연산 .-> MODEL
+    MODEL -- 6. A* 탐색 완료 (Polyline 리턴) --> SERVER
+    SERVER -- 7. JSON 응답 --> UI
+    DB -. 8. 시간별 그림자 맵 로딩 .-> UI
+```
+
+---
+
+## 🧭 핵심 라우팅 로직
+
+1. 카카오 모빌리티 API로 기본 반경(Bbox) 파악 및 위치 설정
+2. 시간대별 데이터베이스(109장의 GeoJSON)를 이용해 특정 시간의 골목길 그림자 덮힘 비율 정밀 계산
+3. **머신러닝(K-Means):** 도로별 그림자 비율, 거리 등을 바탕으로 쾌적지수 모델 자동 3단계 분류
+4. **횡단보도 정밀 제약:** Shapely 교차 분석으로 실제 차도 라인 감지 및 무단횡단 패널티 적용
+5. **A* 라우팅 탐색 가동:** 쾌적지수 등급(가중치 패널티)을 바탕으로 시간 대비 가장 시원한 목적 기반 우회로 탐색
+
+---
+
+## 💻 서버 실행 방법 및 환경 설정 (Usage)
+
+**환경 변수 (`backend/.env` 파일 생성 필수)**
+```env
+KAKAO_REST_API_KEY=발급받은키
+KAKAO_JS_API_KEY=발급받은키
+SIGNAL_API_KEY=신호등API키
+BIKE_API_KEY=공영자전거API키
+```
+*(카카오 콘솔 Web 플랫폼 도메인 설정에 `http://localhost:3000` 등록을 잊지 마세요!)*
+
+**실행 명령어 (로컬 테스트용)**
+```bash
+# 1. 백엔드 서버 가동 (FastAPI)
+cd backend
+python -m uvicorn app:app --reload --port 8000
+
+# 2. 프론트엔드 가동 (새 터미널 열기)
+cd frontend
+python -m http.server 3000
+```
+웹 브라우저에서 `http://localhost:3000` 으로 접속하시면 UI를 띄워볼 수 있습니다.

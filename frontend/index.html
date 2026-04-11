@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shadow-Nav: 그늘길 내비게이션</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -20,12 +19,18 @@
     <div class="section">
         <div class="input-row">
             <span class="dot start-dot"></span>
-            <input type="text" id="input-start" placeholder="출발지 입력" autocomplete="off" />
+            <div class="search-wrap">
+                <input type="text" id="input-start" placeholder="출발지 입력" autocomplete="off" />
+                <ul class="search-dropdown" id="dropdown-start" style="display:none;"></ul>
+            </div>
         </div>
         <div class="divider-line"></div>
         <div class="input-row">
             <span class="dot end-dot"></span>
-            <input type="text" id="input-end" placeholder="도착지 입력" autocomplete="off" />
+            <div class="search-wrap">
+                <input type="text" id="input-end" placeholder="도착지 입력" autocomplete="off" />
+                <ul class="search-dropdown" id="dropdown-end" style="display:none;"></ul>
+            </div>
         </div>
     </div>
 
@@ -35,12 +40,12 @@
         <div class="time-row">
             <button class="time-btn" id="btn-now" onclick="setNow()">지금</button>
             <button class="time-adj" onclick="adjustTime(-5)">&#9664;</button>
-            <span id="time-display">12:00</span>
+            <input type="text" id="time-display" value="12:00" maxlength="5" />
             <button class="time-adj" onclick="adjustTime(+5)">&#9654;</button>
             <input type="time" id="time-picker" step="300" />
         </div>
     </div>
-! cd "C:\Users\jeonm\ihatesun\shadow-nav\backend" && uvicorn app:app --reload --port 8000
+
     <!-- 이동 수단 -->
     <div class="section">
         <label class="section-label">이동 수단</label>
@@ -71,7 +76,6 @@
 
 <div id="map"></div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

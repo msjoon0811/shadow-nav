@@ -165,48 +165,108 @@ def apply_shadow_weights(G, shadow_gdf: gpd.GeoDataFrame):
             highway = highway[0] if highway else ""
         is_footway = highway in _FOOTWAY_TAGS
 
-        base = travel_time * (1.0 - shadow * 0.8)
+        base = travel_time * (1.0 - shadow * 0.3)
         G[u][v][k]["shadow_weight"] = base * (_FOOTWAY_BONUS if is_footway else 1.0)
 
     return G
 
 
+# ── OSM 횡단보도 노드 추출 ────────────────────────────────────────────────────
+
+def extract_osm_crosswalk_nodes(G) -> list[dict]:
+    """
+    OSM 보행 그래프에서 highway=crossing 노드 추출.
+    서울 API 데이터 없이도 횡단보도 위치 파악 가능.
+    """
+    nodes = []
+    for _, data in G.nodes(data=True):
+        hw = data.get("highway", "")
+        if isinstance(hw, list):
+            hw = hw[0] if hw else ""
+        if hw == "crossing":
+            nodes.append({"lat": data["y"], "lng": data["x"]})
+    return nodes
+
+
 # ── 횡단보도 제약 ──────────────────────────────────────────────────────────────
 
-_CROSSING_RADIUS_DEG = 0.0003   # ~33m 이내 횡단보도 없으면 도로 횡단 페널티
-_MAJOR_ROAD_TAGS = {"primary", "secondary", "tertiary", "primary_link", "secondary_link", "tertiary_link"}
-_NO_CROSSING_PENALTY = 5.0      # 횡단보도 없는 도로 횡단 패널티 (분)
+_CROSSING_RADIUS_DEG = 0.0005   # ~55m
+# 횡단보도 강제 적용 대상: 큰 도로만 (골목/이면도로는 제외)
+_MAJOR_ROAD_TAGS = {
+    "primary", "secondary", "tertiary",
+    "primary_link", "secondary_link", "tertiary_link",
+}
+_FOOTWAY_TAGS = {"footway", "pedestrian", "path", "steps", "crossing"}
+_NO_CROSSING_PENALTY = 60.0     # 횡단보도 없는 도로 횡단 패널티 (분)
 
 
 def apply_crosswalk_constraints(G, crosswalk_nodes: list[dict]):
     """
-    주요 도로 엣지 중 근처에 횡단보도 없는 경우 높은 패널티 부여.
-    crosswalk_nodes: [{"lat": float, "lng": float}, ...]
+    보행 엣지가 차도를 실제로 기하학적으로 교차하는지 shapely로 검사.
+    교차 지점 근처에 횡단보도 없으면 높은 패널티 부여.
     """
-    if not crosswalk_nodes:
+    from shapely.ops import unary_union
+    from shapely.strtree import STRtree
+
+    # 1. 도로 엣지 geometry 수집 + STR 공간 인덱스
+    road_geoms = []
+    for u, v, k, data in G.edges(data=True, keys=True):
+        hw = data.get("highway", "")
+        if isinstance(hw, list): hw = hw[0] if hw else ""
+        if hw not in _MAJOR_ROAD_TAGS:
+            continue
+        geom = data.get("geometry")
+        if geom is None:
+            un, vn = G.nodes[u], G.nodes[v]
+            geom = LineString([(un["x"], un["y"]), (vn["x"], vn["y"])])
+        road_geoms.append(geom)
+
+    if not road_geoms:
         return G
 
+    road_union = unary_union(road_geoms)  # 버퍼 없이 선 그대로 유지
+    road_tree  = STRtree(road_geoms)
+
+    # 2. 횡단보도 포인트 STR 인덱스
+    cw_points = [Point(c["lng"], c["lat"]) for c in crosswalk_nodes]
+    cw_tree   = STRtree(cw_points) if cw_points else None
+
+    penalized = 0
     for u, v, k, data in G.edges(data=True, keys=True):
-        highway = data.get("highway", "")
-        if isinstance(highway, list):
-            highway = highway[0] if highway else ""
-        if highway not in _MAJOR_ROAD_TAGS:
+        hw = data.get("highway", "")
+        if isinstance(hw, list): hw = hw[0] if hw else ""
+        # 도로 자체 엣지 스킵
+        if hw in _MAJOR_ROAD_TAGS:
+            continue
+        # 이미 crossing으로 명시된 엣지는 허용
+        if data.get("footway") == "crossing" or hw == "crossing":
             continue
 
-        u_node = G.nodes[u]
-        v_node = G.nodes[v]
-        mid_x = (u_node["x"] + v_node["x"]) / 2
-        mid_y = (u_node["y"] + v_node["y"]) / 2
+        geom = data.get("geometry")
+        if geom is None:
+            un, vn = G.nodes[u], G.nodes[v]
+            geom = LineString([(un["x"], un["y"]), (vn["x"], vn["y"])])
 
-        has_crossing = any(
-            abs(c["lng"] - mid_x) < _CROSSING_RADIUS_DEG and
-            abs(c["lat"] - mid_y) < _CROSSING_RADIUS_DEG
-            for c in crosswalk_nodes
-        )
+        # 도로를 실제로 가로지르는지 확인 (crosses = 완전히 통과, 평행/접선은 제외)
+        if not geom.crosses(road_union):
+            continue
 
-        if not has_crossing:
-            G[u][v][k]["shadow_weight"] = G[u][v][k].get("shadow_weight", data.get("length", 1.0)) + _NO_CROSSING_PENALTY
+        # 교차 지점 근처에 횡단보도 있는지 확인
+        near_cw = False
+        if cw_tree:
+            intersection = geom.intersection(road_union)
+            nearby = cw_tree.query(intersection.buffer(_CROSSING_RADIUS_DEG))
+            near_cw = len(nearby) > 0
+        else:
+            near_cw = True  # 횡단보도 데이터 없으면 패널티 미적용
 
+        if not near_cw:
+            G[u][v][k]["shadow_weight"] = (
+                G[u][v][k].get("shadow_weight", data.get("length", 1.0)) + _NO_CROSSING_PENALTY
+            )
+            penalized += 1
+
+    print(f"[crosswalk] 비횡단보도 도로 횡단 엣지 {penalized}개 패널티 적용")
     return G
 
 
@@ -285,9 +345,11 @@ def calculate_optimal_shadow_route(
         G = assign_basic_time_weights(G, speed_kmh=speed_kmh)
         G = apply_shadow_weights(G, shadow_gdf)
 
-        if crosswalk_nodes:
-            G = apply_crosswalk_constraints(G, crosswalk_nodes)
-            print(f"[shadow] 횡단보도 제약 {len(crosswalk_nodes)}개 적용")
+        # OSM 그래프에서 횡단보도 노드 추출 후 서울 API 데이터와 병합
+        osm_cw = extract_osm_crosswalk_nodes(G)
+        merged_cw = list(crosswalk_nodes or []) + osm_cw
+        print(f"[shadow] 횡단보도 노드: 서울API {len(crosswalk_nodes or [])}개 + OSM {len(osm_cw)}개 = 총 {len(merged_cw)}개")
+        G = apply_crosswalk_constraints(G, merged_cw)
 
         if signal_data:
             G = apply_signal_penalties(G, signal_data)

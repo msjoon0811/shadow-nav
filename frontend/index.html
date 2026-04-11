@@ -1,25 +1,21 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shadow-Nav: 그늘길 내비게이션</title>
-    <!-- 카카오맵 API (autoload=false로 수동 로드) -->
-    <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=b88ad8ae0cef7773707b299b867af87a&libraries=services&autoload=false"></script>
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
-    <!-- 사이드바 토글 버튼 -->
     <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" onclick="toggleSidebar()">
         <span class="toggle-arrow" id="toggle-arrow">◀</span>
     </button>
 
-    <!-- 사이드바 -->
     <div id="sidebar">
-        <!-- 리사이즈 핸들 -->
         <div class="resize-handle" id="resize-handle"></div>
-        
-        <!-- 로고 -->
+
         <div class="logo-section">
             <div class="logo-icon">🌳</div>
             <div class="logo-text">
@@ -28,21 +24,19 @@
             </div>
         </div>
 
-        <!-- 길찾기 입력 -->
         <div class="control-group">
             <h3>🚶 경로 설정</h3>
             <div class="input-wrapper">
                 <span class="input-icon">📍</span>
-                <input type="text" id="start-input" placeholder="출발지 검색 (예: 신논현역)">
+                <input type="text" id="start-input" placeholder="출발지 검색 (예: 신논현역)" autocomplete="off">
                 <ul class="search-results" id="start-results"></ul>
             </div>
             <div class="input-wrapper">
                 <span class="input-icon">🏁</span>
-                <input type="text" id="end-input" placeholder="도착지 검색 (예: 강남역)">
+                <input type="text" id="end-input" placeholder="도착지 검색 (예: 강남역)" autocomplete="off">
                 <ul class="search-results" id="end-results"></ul>
             </div>
-            
-            <!-- 이동 수단 선택 -->
+
             <div class="transport-options">
                 <label class="transport-option">
                     <input type="radio" name="transport" value="walk" checked>
@@ -51,6 +45,21 @@
                 <label class="transport-option">
                     <input type="radio" name="transport" value="bike">
                     <span class="transport-btn">🚴 자전거</span>
+                </label>
+            </div>
+
+            <div class="weight-options" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
+                <label class="weight-option">
+                    <input type="radio" name="weight" value="max_shadow">
+                    <span class="weight-btn">🌳 그늘 우선 <small>(돌아가도 시원하게)</small></span>
+                </label>
+                <label class="weight-option">
+                    <input type="radio" name="weight" value="balance" checked>
+                    <span class="weight-btn">⚖️ 균형형 <small>(적당한 시간과 그늘)</small></span>
+                </label>
+                <label class="weight-option">
+                    <input type="radio" name="weight" value="fastest">
+                    <span class="weight-btn">⚡ 최단 시간 <small>(가장 빠른 길)</small></span>
                 </label>
             </div>
 
@@ -65,12 +74,11 @@
             </div>
         </div>
 
-        <!-- 시간 슬라이더 -->
         <div class="control-group">
             <h3>⏰ 시간대 시뮬레이션</h3>
             <div class="time-control">
                 <div class="time-header">
-                    <span class="time-display" id="time-display">12:00</span>
+                    <input type="text" class="time-display-input" id="time-display" value="12:00" maxlength="5">
                     <span class="temp-badge">
                         🌡️ <span id="temp-display">32°C</span>
                     </span>
@@ -87,51 +95,36 @@
             </div>
         </div>
 
-        <!-- 정보 카드 -->
         <div class="info-card" id="info-card">
             <strong>💡 TIP:</strong> 출발지와 도착지를 검색하거나 지도를 클릭하여 설정할 수 있어요.
-            시간 슬라이더를 움직여 시간대별 그림자를 확인해보세요!
         </div>
 
-        <!-- 따릉이 정보 (자전거 선택 시) -->
         <div class="bike-info" id="bike-info" style="display: none;">
             <h3>🚴 따릉이 대여소 정보</h3>
-            <div class="bike-station" id="bike-station-info">
-                주변 대여소 정보를 불러오는 중...
-            </div>
+            <div class="bike-station" id="bike-station-info"></div>
         </div>
 
-        <!-- 범례 -->
         <div class="legend">
             <h3>범례</h3>
             <div class="legend-item">
-                <div class="legend-color shadow"></div>
-                <span>건물 그림자 (시원한 구간)</span>
+                <div class="legend-color shadow"></div><span>건물 그림자 (시원한 구간)</span>
             </div>
             <div class="legend-item">
-                <div class="legend-color route"></div>
-                <span>추천 그늘길 경로</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-color sun"></div>
-                <span>직사광선 구간</span>
+                <div class="legend-color route"></div><span>추천 그늘길 경로</span>
             </div>
         </div>
     </div>
 
-    <!-- 지도 영역 -->
     <div id="map"></div>
 
-    <!-- 로딩 오버레이 -->
     <div class="loading-overlay" id="loading">
         <div class="loading-spinner"></div>
-        <div class="loading-text">그림자 데이터를 불러오는 중...</div>
+        <div class="loading-text">데이터를 불러오는 중...</div>
     </div>
 
-    <!-- 토스트 메시지 -->
     <div class="toast" id="toast"></div>
 
-    <!-- 메인 앱 로직 -->
     <script src="app.js"></script>
 </body>
+
 </html>

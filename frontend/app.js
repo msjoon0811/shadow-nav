@@ -1,495 +1,396 @@
-/**
- * Shadow-Nav: 그늘길 내비게이션
- * Frontend - 카카오맵 버전
- */
-
-// ============================================
-// 1. 전역 변수 및 설정
-// ============================================
-
-const MAP_CENTER = { lat: 37.5045, lng: 127.0248 };
-const MAP_ZOOM = 4;
-const SHADOW_DATA_PATH = '../data/shadow_data';
+const API_BASE = "http://localhost:8002"; // 팀원분이 설정한 백엔드 포트
 
 let map = null;
-let ps = null;
-let geocoder = null;
 let shadowPolygons = [];
 let routePolyline = null;
 let startMarker = null;
 let endMarker = null;
-let startCoord = null;
-let endCoord = null;
-let searchTimeout = null;
+
+let selected = { start: null, end: null };
 let isSidebarCollapsed = false;
 let sidebarWidth = 340;
 
-// ============================================
-// 2. 지도 초기화
-// ============================================
+let bikeOverlays = [];
+let signalOverlays = [];
+let openInfoWindow = null;
+let _shadowAbort = null; // 팀원 코드: 이전 그림자 로딩 취소용
+
+// 1. 초기화 (백엔드에서 API 키 가져오기)
+document.addEventListener("DOMContentLoaded", async () => {
+    showLoading(true, "초기 설정 중...");
+    try {
+        const res = await fetch(`${API_BASE}/api/config`);
+        const { kakao_js_key } = await res.json();
+        await loadKakaoSDK(kakao_js_key);
+
+        initMap();
+        initSearchInput("start-input", "start-results", "start");
+        initSearchInput("end-input", "end-results", "end");
+        initTimeControls();
+        initSidebarResize();
+
+        loadShadowLayer("12:00");
+        showToast("지도를 클릭하거나 검색하여 출발지를 설정하세요!", "info");
+    } catch (e) {
+        showToast("서버 연결 실패: 백엔드(8002)를 확인하세요.", "error");
+        console.error(e);
+    } finally {
+        showLoading(false);
+    }
+});
+
+function loadKakaoSDK(appkey) {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${appkey}&autoload=false`;
+        script.onload = () => kakao.maps.load(resolve);
+        script.onerror = reject;
+        document.head.appendChild(script);
+    });
+}
 
 function initMap() {
-    const container = document.getElementById('map');
-    const options = {
-        center: new kakao.maps.LatLng(MAP_CENTER.lat, MAP_CENTER.lng),
-        level: MAP_ZOOM
-    };
-
-    map = new kakao.maps.Map(container, options);
-
-    // 컨트롤 추가
-    map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
-    map.addControl(new kakao.maps.MapTypeControl(), kakao.maps.ControlPosition.TOPRIGHT);
-
-    // 서비스 초기화
-    ps = new kakao.maps.services.Places();
-    geocoder = new kakao.maps.services.Geocoder();
-
-    // 클릭 이벤트
-    kakao.maps.event.addListener(map, 'click', onMapClick);
-
-    console.log('✅ 카카오맵 초기화 완료');
+    map = new kakao.maps.Map(document.getElementById("map"), {
+        center: new kakao.maps.LatLng(37.5045, 127.0248),
+        level: 4,
+    });
+    kakao.maps.event.addListener(map, "click", onMapClick);
 }
 
-// ============================================
-// 3. 장소 검색
-// ============================================
+// 2. 검색 기능 (백엔드 API 호출)
+function initSearchInput(inputId, dropdownId, key) {
+    const input = document.getElementById(inputId);
+    const dropdown = document.getElementById(dropdownId);
+    let debounceTimer = null;
 
-function initSearch() {
-    const startInput = document.getElementById('start-input');
-    const endInput = document.getElementById('end-input');
-    const startResults = document.getElementById('start-results');
-    const endResults = document.getElementById('end-results');
+    input.addEventListener("input", () => {
+        selected[key] = null;
+        clearTimeout(debounceTimer);
+        const q = input.value.trim();
 
-    startInput.addEventListener('input', (e) => {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => searchPlaces(e.target.value, startResults, 'start'), 300);
+        if (!q) {
+            dropdown.classList.remove("active");
+            return;
+        }
+        debounceTimer = setTimeout(() => fetchSuggestions(q, input, dropdown, key), 300);
     });
 
-    endInput.addEventListener('input', (e) => {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => searchPlaces(e.target.value, endResults, 'end'), 300);
-    });
-
-    document.addEventListener('click', (e) => {
-        if (!e.target.closest('.input-wrapper')) {
-            startResults.classList.remove('active');
-            endResults.classList.remove('active');
+    document.addEventListener("click", (e) => {
+        if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.classList.remove("active");
         }
     });
 }
 
-function searchPlaces(keyword, resultsEl, type) {
-    if (!keyword || keyword.length < 2) {
-        resultsEl.classList.remove('active');
-        return;
-    }
+async function fetchSuggestions(query, input, dropdown, key) {
+    try {
+        const center = map.getCenter();
+        const url = `${API_BASE}/api/search?query=${encodeURIComponent(query)}&x=${center.getLng()}&y=${center.getLat()}`;
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const results = await res.json();
 
-    ps.keywordSearch(keyword, (data, status) => {
-        if (status === kakao.maps.services.Status.OK) {
-            displaySearchResults(data, resultsEl, type);
-        } else {
-            resultsEl.innerHTML = '<li>검색 결과가 없습니다.</li>';
-            resultsEl.classList.add('active');
+        dropdown.innerHTML = "";
+        if (!results.length) {
+            dropdown.classList.remove("active");
+            return;
         }
-    }, {
-        location: new kakao.maps.LatLng(MAP_CENTER.lat, MAP_CENTER.lng),
-        radius: 5000
-    });
-}
 
-function displaySearchResults(places, resultsEl, type) {
-    resultsEl.innerHTML = '';
-    
-    places.slice(0, 5).forEach(place => {
-        const li = document.createElement('li');
-        li.innerHTML = `
-            <div class="place-name">${place.place_name}</div>
-            <div class="place-address">${place.address_name}</div>
-        `;
-        li.addEventListener('click', () => {
-            selectPlace(place, type);
-            resultsEl.classList.remove('active');
+        results.forEach(r => {
+            const li = document.createElement("li");
+            li.innerHTML = `<div class="place-name">${r.name}</div><div class="place-address">${r.address}</div>`;
+            li.addEventListener("click", () => {
+                selected[key] = r;
+                input.value = r.name;
+                dropdown.classList.remove("active");
+                setMarker(new kakao.maps.LatLng(r.lat, r.lng), key, r.name);
+                map.panTo(new kakao.maps.LatLng(r.lat, r.lng));
+            });
+            dropdown.appendChild(li);
         });
-        resultsEl.appendChild(li);
-    });
-    
-    resultsEl.classList.add('active');
+        dropdown.classList.add("active");
+    } catch (e) { console.error("Search Error:", e); }
 }
 
-function selectPlace(place, type) {
-    const coord = { lat: parseFloat(place.y), lng: parseFloat(place.x) };
-    const position = new kakao.maps.LatLng(coord.lat, coord.lng);
-
-    if (type === 'start') {
-        document.getElementById('start-input').value = place.place_name;
-        startCoord = coord;
-        setMarker(position, 'start', place.place_name);
-        showToast(`출발지: ${place.place_name}`, 'success');
-    } else {
-        document.getElementById('end-input').value = place.place_name;
-        endCoord = coord;
-        setMarker(position, 'end', place.place_name);
-        showToast(`도착지: ${place.place_name}`, 'success');
-    }
-
-    map.panTo(position);
+// 3. 지오코딩 & 클릭
+async function geocode(query) {
+    const res = await fetch(`${API_BASE}/api/geocode?query=${encodeURIComponent(query)}`);
+    if (!res.ok) throw new Error("장소를 찾을 수 없습니다.");
+    return res.json();
 }
 
-// ============================================
-// 4. 마커 관리
-// ============================================
-
-function setMarker(position, type, title) {
-    if (type === 'start' && startMarker) startMarker.setMap(null);
-    if (type === 'end' && endMarker) endMarker.setMap(null);
-
-    const imageSrc = type === 'start' 
-        ? 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png'
-        : 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png';
-    
-    const marker = new kakao.maps.Marker({
-        position: position,
-        map: map,
-        image: new kakao.maps.MarkerImage(imageSrc, new kakao.maps.Size(24, 35)),
-        title: title
-    });
-
-    const infowindow = new kakao.maps.InfoWindow({
-        content: `<div style="padding:5px;font-size:12px;">${type === 'start' ? '📍 출발' : '🏁 도착'}: ${title}</div>`
-    });
-
-    kakao.maps.event.addListener(marker, 'mouseover', () => infowindow.open(map, marker));
-    kakao.maps.event.addListener(marker, 'mouseout', () => infowindow.close());
-
-    if (type === 'start') startMarker = marker;
-    else endMarker = marker;
-}
-
-function onMapClick(mouseEvent) {
+async function onMapClick(mouseEvent) {
     const latlng = mouseEvent.latLng;
     const coord = { lat: latlng.getLat(), lng: latlng.getLng() };
 
+    // 단순 좌표를 장소명으로 변환하는 것은 카카오 Geocoder API가 편리하므로 백엔드 우회
+    const geocoder = new kakao.maps.services.Geocoder();
     geocoder.coord2Address(coord.lng, coord.lat, (result, status) => {
         let placeName = `${coord.lat.toFixed(5)}, ${coord.lng.toFixed(5)}`;
-        if (status === kakao.maps.services.Status.OK) {
+        if (status === kakao.maps.services.Status.OK && result[0]) {
             placeName = result[0].address.address_name;
         }
 
-        if (!startCoord) {
-            document.getElementById('start-input').value = placeName;
-            startCoord = coord;
-            setMarker(latlng, 'start', placeName);
-            showToast('출발지 설정 완료! 도착지를 클릭하세요.', 'info');
-        } else if (!endCoord) {
-            document.getElementById('end-input').value = placeName;
-            endCoord = coord;
-            setMarker(latlng, 'end', placeName);
-            showToast('도착지 설정 완료!', 'success');
+        if (!selected.start) {
+            selected.start = { lat: coord.lat, lng: coord.lng, name: placeName };
+            document.getElementById("start-input").value = placeName;
+            setMarker(latlng, "start", placeName);
+            showToast("출발지 설정 완료! 도착지를 클릭하세요.", "info");
+        } else if (!selected.end) {
+            selected.end = { lat: coord.lat, lng: coord.lng, name: placeName };
+            document.getElementById("end-input").value = placeName;
+            setMarker(latlng, "end", placeName);
+            showToast("도착지 설정 완료!", "success");
         }
     });
 }
 
-// ============================================
-// 5. 시간 슬라이더
-// ============================================
+function setMarker(position, type, title) {
+    if (type === "start" && startMarker) startMarker.setMap(null);
+    if (type === "end" && endMarker) endMarker.setMap(null);
 
-function initTimeSlider() {
-    const slider = document.getElementById('time-slider');
-    const timeDisplay = document.getElementById('time-display');
-    const tempDisplay = document.getElementById('temp-display');
+    const imageSrc = type === "start" ? "https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png" : "https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png";
+    const marker = new kakao.maps.Marker({ position, map, image: new kakao.maps.MarkerImage(imageSrc, new kakao.maps.Size(24, 35)), title });
 
-    slider.addEventListener('input', (e) => {
-        const minutes = parseInt(e.target.value);
-        timeDisplay.textContent = minutesToTimeString(minutes);
-        tempDisplay.textContent = `${simulateTemperature(minutes)}°C`;
+    if (type === "start") startMarker = marker;
+    else endMarker = marker;
+}
+
+// 4. 시간 연동 로직 (슬라이더 + 타이핑)
+function initTimeControls() {
+    const slider = document.getElementById("time-slider");
+    const display = document.getElementById("time-display");
+    const tempDisplay = document.getElementById("temp-display");
+
+    // 슬라이더 조작 시 -> 텍스트 업데이트
+    slider.addEventListener("input", (e) => {
+        const mins = parseInt(e.target.value, 10);
+        display.value = formatTime(Math.floor(mins / 60), mins % 60);
+        tempDisplay.textContent = `${simulateTemperature(mins)}°C`;
     });
 
-    slider.addEventListener('change', (e) => {
-        loadShadowForTime(parseInt(e.target.value));
+    // 슬라이더 놓았을 때 -> 백엔드 요청
+    slider.addEventListener("change", (e) => {
+        loadShadowLayer(display.value);
+    });
+
+    // 텍스트 직접 입력 시 -> 슬라이더 업데이트 & 백엔드 요청
+    display.addEventListener("change", (e) => {
+        const val = e.target.value;
+        if (!/^\d{1,2}:\d{2}$/.test(val)) return;
+        const [h, m] = val.split(":").map(Number);
+        if (h >= 9 && h <= 18 && m <= 59) {
+            const totalMins = h * 60 + m;
+            slider.value = totalMins;
+            tempDisplay.textContent = `${simulateTemperature(totalMins)}°C`;
+            loadShadowLayer(val);
+        }
     });
 }
 
-function minutesToTimeString(minutes) {
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
-}
-
-function timeToFileFormat(minutes) {
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours.toString().padStart(2, '0')}${mins.toString().padStart(2, '0')}`;
+function formatTime(h, m) {
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 function simulateTemperature(minutes) {
     const hour = minutes / 60;
     if (hour <= 10) return Math.round(28 + (hour - 9) * 2);
     if (hour <= 14) return Math.round(30 + (hour - 10) * 1);
-    if (hour <= 16) return Math.round(34 - (hour - 14) * 0.5);
-    return Math.round(33 - (hour - 16) * 1.5);
+    return Math.round(34 - (hour - 14) * 0.5);
 }
 
-// ============================================
-// 6. 그림자 데이터
-// ============================================
+// 5. 그림자 데이터 (AbortController 적용)
+async function loadShadowLayer(timeStr) {
+    if (_shadowAbort) _shadowAbort.abort();
+    _shadowAbort = new AbortController();
 
-async function loadShadowForTime(minutes) {
-    showLoading(true, '그림자 데이터를 불러오는 중...');
+    shadowPolygons.forEach(p => p.setMap(null));
+    shadowPolygons = [];
+    showLoading(true, "그림자 데이터 렌더링 중...");
 
     try {
-        const roundedMinutes = Math.round(minutes / 5) * 5;
-        const timeStr = timeToFileFormat(roundedMinutes);
-        const url = `${SHADOW_DATA_PATH}/shadow_0801_${timeStr}.geojson`;
+        const res = await fetch(`${API_BASE}/api/shadow/${timeStr.replace(":", "-")}`, { signal: _shadowAbort.signal });
+        if (!res.ok) throw new Error("데이터 없음");
 
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('파일 없음');
+        const geojson = await res.json();
 
-        const geojsonData = await response.json();
-        renderShadow(geojsonData);
-        showToast(`${minutesToTimeString(roundedMinutes)} 그림자 로드 완료`, 'success');
-    } catch (error) {
-        console.error('그림자 로딩 실패:', error);
-        showToast('그림자 데이터 로딩 실패', 'error');
+        for (const feature of geojson.features) {
+            const geom = feature.geometry;
+            const rings = geom.type === "Polygon" ? [geom.coordinates[0]] : geom.coordinates.map(c => c[0]);
+
+            for (const ring of rings) {
+                const path = ring.map(([lng, lat]) => new kakao.maps.LatLng(lat, lng));
+                shadowPolygons.push(new kakao.maps.Polygon({
+                    map, path, strokeWeight: 0, fillColor: "#1e3c5a", fillOpacity: 0.4
+                }));
+            }
+        }
+    } catch (e) {
+        if (e.name !== "AbortError") console.warn("그림자 실패:", e);
     } finally {
         showLoading(false);
     }
 }
 
-function renderShadow(geojsonData) {
-    shadowPolygons.forEach(p => p.setMap(null));
-    shadowPolygons = [];
-
-    geojsonData.features.forEach(feature => {
-        if (feature.geometry.type === 'Polygon') {
-            const path = feature.geometry.coordinates[0].map(c => new kakao.maps.LatLng(c[1], c[0]));
-
-            const polygon = new kakao.maps.Polygon({
-                map: map,
-                path: path,
-                strokeWeight: 1,
-                strokeColor: '#00d4aa',
-                strokeOpacity: 0.6,
-                fillColor: '#1e3c5a',
-                fillOpacity: 0.5
-            });
-
-            kakao.maps.event.addListener(polygon, 'mouseover', () => polygon.setOptions({ fillOpacity: 0.7 }));
-            kakao.maps.event.addListener(polygon, 'mouseout', () => polygon.setOptions({ fillOpacity: 0.5 }));
-
-            shadowPolygons.push(polygon);
-        }
-    });
-
-    console.log(`✅ ${shadowPolygons.length}개 그림자 렌더링`);
-}
-
-// ============================================
-// 7. 길찾기
-// ============================================
-
+// 6. 길찾기 로직
 async function findRoute() {
-    if (!startCoord || !endCoord) {
-        showToast('출발지와 도착지를 모두 설정해주세요!', 'error');
+    const startQuery = document.getElementById("start-input").value.trim();
+    const endQuery = document.getElementById("end-input").value.trim();
+    const timeStr = document.getElementById("time-display").value;
+    const mode = document.querySelector('input[name="transport"]:checked').value;
+    const weightMode = document.querySelector('input[name="weight"]:checked').value;
+
+    if (!startQuery || !endQuery) {
+        showToast("출발지와 도착지를 모두 설정해주세요!", "error");
         return;
     }
 
-    const transportType = document.querySelector('input[name="transport"]:checked').value;
-    showLoading(true, '최적의 그늘길을 계산하는 중...');
+    let loadingMsg = "최적의 경로 계산 중...";
+    if (weightMode === 'max_shadow') loadingMsg = "그림자가 가장 많은 경로 계산 중...";
+    else if (weightMode === 'fastest') loadingMsg = "가장 빠른 경로 계산 중...";
+
+    showLoading(true, loadingMsg);
 
     try {
-        // TODO: 백엔드 API 연동
-        await simulateDemoRoute(transportType);
-    } catch (error) {
-        showToast('경로 계산 실패', 'error');
+        const [startCoord, endCoord] = await Promise.all([
+            selected.start || geocode(startQuery),
+            selected.end || geocode(endQuery),
+        ]);
+
+        selected.start = startCoord;
+        selected.end = endCoord;
+
+        const res = await fetch(`${API_BASE}/api/route`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                start_lat: startCoord.lat, start_lng: startCoord.lng,
+                end_lat: endCoord.lat, end_lng: endCoord.lng,
+                time_str: timeStr, mode, weight_mode: weightMode
+            })
+        });
+
+        if (!res.ok) throw new Error("서버 경로 계산 오류");
+        const data = await res.json();
+
+        if (routePolyline) routePolyline.setMap(null);
+        const path = (data.route || []).map(c => new kakao.maps.LatLng(c.lat, c.lng));
+        routePolyline = new kakao.maps.Polyline({
+            map, path, strokeWeight: 6, strokeColor: "#00d4aa", strokeOpacity: 0.9, strokeStyle: "solid"
+        });
+
+        const bounds = new kakao.maps.LatLngBounds();
+        path.forEach(p => bounds.extend(p));
+        map.setBounds(bounds);
+
+        renderBikeStations(data.ddareungi_stations || [], mode);
+        renderSignals(data.signal_data || []);
+
+        document.getElementById("info-card").innerHTML = `<strong>🌳 그늘길 경로 탐색 완료!</strong><br>안전하게 이동하세요.`;
+        showToast("경로를 찾았습니다!", "success");
+
+    } catch (e) {
+        showToast(e.message, "error");
     } finally {
         showLoading(false);
     }
 }
 
-async function simulateDemoRoute(transportType) {
-    await new Promise(r => setTimeout(r, 800));
+// 7. 자전거 & 신호등 렌더링
+function renderBikeStations(stations, mode) {
+    bikeOverlays.forEach(o => o.setMap(null));
+    bikeOverlays = [];
+    const infoPanel = document.getElementById("bike-info");
+    const infoList = document.getElementById("bike-station-info");
+    infoList.innerHTML = "";
 
-    if (routePolyline) routePolyline.setMap(null);
-
-    const path = [];
-    const steps = 15;
-    for (let i = 0; i <= steps; i++) {
-        const t = i / steps;
-        const lat = startCoord.lat + (endCoord.lat - startCoord.lat) * t;
-        const lng = startCoord.lng + (endCoord.lng - startCoord.lng) * t;
-        const offset = Math.sin(t * Math.PI) * 0.001 * (Math.random() - 0.5);
-        path.push(new kakao.maps.LatLng(lat + offset, lng + offset));
+    if (mode !== "bike" || !stations.length) {
+        infoPanel.style.display = "none";
+        return;
     }
 
-    routePolyline = new kakao.maps.Polyline({
-        map: map,
-        path: path,
-        strokeWeight: 6,
-        strokeColor: '#0099ff',
-        strokeOpacity: 0.8
+    stations.forEach(s => {
+        const overlay = new kakao.maps.CustomOverlay({
+            position: new kakao.maps.LatLng(s.lat, s.lng),
+            content: `<div class="bike-marker">${s.available ?? 0}</div>`,
+            map, yAnchor: 0.5, xAnchor: 0.5
+        });
+        bikeOverlays.push(overlay);
+        infoList.innerHTML += `<div>📍 ${s.name} - <strong style="color:var(--cool-mint)">${s.available ?? 0}대</strong></div>`;
     });
-
-    const bounds = new kakao.maps.LatLngBounds();
-    path.forEach(p => bounds.extend(p));
-    map.setBounds(bounds);
-
-    if (transportType === 'bike') {
-        document.getElementById('bike-info').style.display = 'block';
-        document.getElementById('bike-station-info').innerHTML = `
-            <div>📍 신논현역 1번출구 대여소 - <span class="bike-count">7대</span></div>
-            <div>📍 강남역 10번출구 대여소 - <span class="bike-count">12대</span></div>
-        `;
-    } else {
-        document.getElementById('bike-info').style.display = 'none';
-    }
-
-    showToast('🌳 그늘길 경로를 찾았습니다!', 'success');
-    updateRouteInfo(transportType);
+    infoPanel.style.display = "block";
 }
 
-function updateRouteInfo(transportType) {
-    const R = 6371;
-    const dLat = (endCoord.lat - startCoord.lat) * Math.PI / 180;
-    const dLng = (endCoord.lng - startCoord.lng) * Math.PI / 180;
-    const a = Math.sin(dLat/2)**2 + Math.cos(startCoord.lat * Math.PI/180) * Math.cos(endCoord.lat * Math.PI/180) * Math.sin(dLng/2)**2;
-    const distance = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 1000;
-    const speed = transportType === 'bike' ? 200 : 80;
-    const time = Math.round(distance / speed);
+function renderSignals(signals) {
+    signalOverlays.forEach(o => o.setMap(null));
+    signalOverlays = [];
 
-    document.getElementById('info-card').innerHTML = `
-        <strong>📍 경로 정보</strong><br>
-        거리: 약 ${Math.round(distance)}m<br>
-        예상 소요: 약 ${time}분 (${transportType === 'bike' ? '🚴 자전거' : '🚶 도보'})<br>
-        <span style="color: #00d4aa;">🌳 그늘 구간: 약 ${Math.round(Math.random() * 30 + 50)}%</span>
-    `;
+    signals.forEach(s => {
+        const isRed = s.red_remaining_sec > 0;
+        const color = isRed ? "#e53935" : "#43a047";
+        const emoji = isRed ? "🔴" : "🟢";
+        const overlay = new kakao.maps.CustomOverlay({
+            position: new kakao.maps.LatLng(s.lat, s.lng),
+            content: `<div style="width:20px;height:20px;border-radius:50%;background:${color};border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:10px;">${emoji}</div>`,
+            map, yAnchor: 0.5, xAnchor: 0.5
+        });
+        signalOverlays.push(overlay);
+    });
 }
 
-// ============================================
-// 8. 사이드바
-// ============================================
+// 8. 기타 UI 유틸
+function showLoading(show, message = "로딩 중...") {
+    const loading = document.getElementById("loading");
+    if (loading.querySelector(".loading-text")) loading.querySelector(".loading-text").textContent = message;
+    loading.classList.toggle("active", show);
+}
+
+function showToast(message, type = "info") {
+    const toast = document.getElementById("toast");
+    toast.textContent = message;
+    toast.className = `toast ${type} show`;
+    setTimeout(() => toast.classList.remove("show"), 3000);
+}
 
 function toggleSidebar() {
-    const sidebar = document.getElementById('sidebar');
-    const mapEl = document.getElementById('map');
-    const toggleBtn = document.getElementById('sidebar-toggle-btn');
-    
     isSidebarCollapsed = !isSidebarCollapsed;
-    
-    if (isSidebarCollapsed) {
-        sidebar.classList.add('collapsed');
-        mapEl.classList.add('expanded');
-        mapEl.style.left = '0';
-        toggleBtn.classList.add('collapsed');
-        toggleBtn.style.left = '0';
-    } else {
-        sidebar.classList.remove('collapsed');
-        mapEl.classList.remove('expanded');
-        mapEl.style.left = sidebarWidth + 'px';
-        toggleBtn.classList.remove('collapsed');
-        toggleBtn.style.left = sidebarWidth + 'px';
-    }
-    
-    setTimeout(() => map.relayout(), 300);
+    document.getElementById("sidebar").classList.toggle("collapsed", isSidebarCollapsed);
+    document.getElementById("map").classList.toggle("expanded", isSidebarCollapsed);
+    document.getElementById("sidebar-toggle-btn").classList.toggle("collapsed", isSidebarCollapsed);
+    document.getElementById("toggle-arrow").textContent = isSidebarCollapsed ? "▶" : "◀";
+    setTimeout(() => { if (map) map.relayout(); }, 300);
 }
 
 function initSidebarResize() {
-    const sidebar = document.getElementById('sidebar');
-    const resizeHandle = document.getElementById('resize-handle');
-    const mapEl = document.getElementById('map');
-    const toggleBtn = document.getElementById('sidebar-toggle-btn');
-    
+    const sidebar = document.getElementById("sidebar");
+    const resizeHandle = document.getElementById("resize-handle");
     let isResizing = false;
-    
-    resizeHandle.addEventListener('mousedown', (e) => {
-        isResizing = true;
-        resizeHandle.classList.add('active');
-        document.body.style.cursor = 'ew-resize';
-        document.body.style.userSelect = 'none';
-        e.preventDefault();
-    });
-    
-    document.addEventListener('mousemove', (e) => {
+
+    resizeHandle.addEventListener("mousedown", () => { isResizing = true; });
+    document.addEventListener("mousemove", (e) => {
         if (!isResizing) return;
-        const newWidth = Math.min(500, Math.max(280, e.clientX));
-        sidebarWidth = newWidth;
-        sidebar.style.width = newWidth + 'px';
-        mapEl.style.left = newWidth + 'px';
-        toggleBtn.style.left = newWidth + 'px';
-        document.documentElement.style.setProperty('--sidebar-width', newWidth + 'px');
+        sidebarWidth = Math.min(500, Math.max(280, e.clientX));
+        sidebar.style.width = sidebarWidth + "px";
+        document.getElementById("map").style.left = sidebarWidth + "px";
+        document.getElementById("sidebar-toggle-btn").style.left = sidebarWidth + "px";
     });
-    
-    document.addEventListener('mouseup', () => {
-        if (isResizing) {
-            isResizing = false;
-            resizeHandle.classList.remove('active');
-            document.body.style.cursor = '';
-            document.body.style.userSelect = '';
-            map.relayout();
-        }
+    document.addEventListener("mouseup", () => {
+        if (isResizing) { isResizing = false; if (map) map.relayout(); }
     });
-}
-
-// ============================================
-// 9. UI 유틸리티
-// ============================================
-
-function showLoading(show, message = '로딩 중...') {
-    const loading = document.getElementById('loading');
-    loading.querySelector('.loading-text').textContent = message;
-    loading.classList.toggle('active', show);
-}
-
-function showToast(message, type = 'info') {
-    const toast = document.getElementById('toast');
-    toast.textContent = message;
-    toast.className = `toast ${type} show`;
-    setTimeout(() => toast.classList.remove('show'), 3000);
 }
 
 function resetAll() {
     if (startMarker) startMarker.setMap(null);
     if (endMarker) endMarker.setMap(null);
     if (routePolyline) routePolyline.setMap(null);
-    
-    startMarker = endMarker = routePolyline = null;
-    startCoord = endCoord = null;
-    
-    document.getElementById('start-input').value = '';
-    document.getElementById('end-input').value = '';
-    document.getElementById('bike-info').style.display = 'none';
-    document.getElementById('info-card').innerHTML = `
-        <strong>💡 TIP:</strong> 출발지와 도착지를 검색하거나 지도를 클릭하여 설정할 수 있어요.
-    `;
-    
-    map.setCenter(new kakao.maps.LatLng(MAP_CENTER.lat, MAP_CENTER.lng));
-    map.setLevel(MAP_ZOOM);
-    
-    showToast('초기화되었습니다.', 'info');
+    bikeOverlays.forEach(o => o.setMap(null));
+    signalOverlays.forEach(o => o.setMap(null));
+
+    startMarker = null; endMarker = null; routePolyline = null;
+    selected = { start: null, end: null };
+
+    document.getElementById("start-input").value = "";
+    document.getElementById("end-input").value = "";
+    document.getElementById("bike-info").style.display = "none";
+    showToast("초기화되었습니다.");
 }
-
-// ============================================
-// 10. 초기화
-// ============================================
-
-window.onload = function() {
-    console.log('🚀 Shadow-Nav 시작');
-    
-    // 카카오맵 SDK 로드 완료 후 실행
-    kakao.maps.load(function() {
-        console.log('✅ 카카오맵 SDK 로드 완료');
-        
-        initMap();
-        initSearch();
-        initTimeSlider();
-        initSidebarResize();
-        loadShadowForTime(720);
-        
-        console.log('✅ 초기화 완료!');
-        showToast('지도를 클릭하거나 검색하여 출발지를 설정하세요!', 'info');
-    });
-};
-
-window.toggleSidebar = toggleSidebar;
-window.findRoute = findRoute;
-window.resetAll = resetAll;

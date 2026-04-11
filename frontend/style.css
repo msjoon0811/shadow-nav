@@ -99,6 +99,61 @@ body {
 
 .input-row input::placeholder { color: #bbb; }
 
+/* ── 검색 드롭다운 ─────────────────────────────────────────── */
+
+.search-wrap {
+    position: relative;
+    flex: 1;
+}
+
+.search-wrap input {
+    width: 100%;
+    border: none;
+    outline: none;
+    font-size: 14px;
+    color: #1a1a2e;
+    background: transparent;
+    padding: 2px 0;
+}
+
+.search-wrap input::placeholder { color: #bbb; }
+
+.search-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: -26px;
+    right: -16px;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.12);
+    z-index: 9999;
+    overflow: hidden;
+}
+
+.search-dropdown li {
+    list-style: none;
+    padding: 9px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #f5f5f5;
+    transition: background .1s;
+}
+
+.search-dropdown li:last-child { border-bottom: none; }
+.search-dropdown li:hover { background: #f0f4ff; }
+
+.search-dropdown .item-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1a1a2e;
+}
+
+.search-dropdown .item-addr {
+    font-size: 11px;
+    color: #999;
+    margin-top: 2px;
+}
+
 /* ── 시간 선택 ─────────────────────────────────────────────── */
 
 .time-row {
@@ -114,6 +169,11 @@ body {
     font-weight: 700;
     color: #1a1a2e;
     font-variant-numeric: tabular-nums;
+    border: none;
+    outline: none;
+    background: transparent;
+    width: 60px;
+    cursor: text;
 }
 
 .time-btn {

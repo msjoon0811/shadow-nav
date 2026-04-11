@@ -17,6 +17,7 @@ app = FastAPI(title="Shadow-Nav API")
 _SHADOW_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "shadow_data")
 
 KAKAO_REST_API_KEY   = os.environ.get("KAKAO_REST_API_KEY", "")
+KAKAO_JS_API_KEY     = os.environ.get("KAKAO_JS_API_KEY", "")
 SIGNAL_API_KEY       = os.environ.get("SIGNAL_API_KEY", "")
 DDAREUNGI_API_KEY    = os.environ.get("DDAREUNGI_API_KEY", "")
 SEOUL_API_KEY        = os.environ.get("SEOUL_API_KEY", "")
@@ -233,20 +234,28 @@ async def fetch_traffic_signals(coords: list[dict]) -> list[dict]:
                 except (KeyError, ValueError, TypeError):
                     continue
 
-            # 3. tl_drct_info → 보행자 신호 잔여시간 추출 (>0인 것만)
+            # 3. tl_drct_info → 보행자 적색 신호 잔여시간 추출
+            #    - PdsgSttsNm이 "stop-And-Remain"인 경우만 빨간불로 처리
+            #    - 300초 초과 값은 데이터 오류로 간주하고 버림
             rt_signals: list[tuple[str, int]] = []  # [(crsrdId, sec), ...]
             for rt in rt_items:
                 cid = str(rt.get("crsrdId", ""))
+                max_sec = 0
                 for prefix in ["nt", "et", "st", "wt", "ne", "se", "sw", "nw"]:
+                    stt = rt.get(f"{prefix}PdsgSttsNm", "")
+                    if stt != "stop-And-Remain":
+                        continue
                     val = rt.get(f"{prefix}PdsgRmndCs", "")
-                    if val:
-                        try:
-                            sec = int(val)
-                            if sec > 0:
-                                rt_signals.append((cid, sec))
-                                break
-                        except ValueError:
-                            continue
+                    if not val:
+                        continue
+                    try:
+                        sec = int(val)
+                        if 0 < sec <= 300:
+                            max_sec = max(max_sec, sec)
+                    except ValueError:
+                        continue
+                if max_sec > 0:
+                    rt_signals.append((cid, max_sec))
 
             print(f"[signal] 보행자 신호 있는 교차로: {len(rt_signals)}개")
 
@@ -380,6 +389,11 @@ def health_check():
     return {"status": "ok"}
 
 
+@app.get("/api/config")
+def get_config():
+    return {"kakao_js_key": KAKAO_JS_API_KEY}
+
+
 @app.get("/api/shadow/{time_str}")
 def get_shadow_geojson(time_str: str):
     """
@@ -406,14 +420,22 @@ def get_shadow_geojson(time_str: str):
     return FileResponse(fpath, media_type="application/geo+json")
 
 
-@app.get("/api/geocode")
-async def geocode(query: str = Query(..., description="장소명")):
-    """Kakao Local API 프록시 — 장소명 → 위경도 변환"""
+@app.get("/api/search")
+async def search(
+    query: str   = Query(..., description="장소명"),
+    x:     float = Query(None, description="지도 중심 경도"),
+    y:     float = Query(None, description="지도 중심 위도"),
+):
+    """Kakao Local API 프록시 — 장소명 검색 결과 최대 5개 반환 (지도 중심 기준 거리순)"""
     if not KAKAO_REST_API_KEY:
         raise HTTPException(status_code=500, detail="KAKAO_REST_API_KEY가 설정되지 않았습니다.")
 
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_API_KEY}"}
-    params  = {"query": query, "size": 1}
+    params: dict = {"query": query, "size": 5}
+    if x is not None and y is not None:
+        params["x"] = x
+        params["y"] = y
+        params["sort"] = "distance"
 
     async with httpx.AsyncClient() as client:
         res = await client.get(
@@ -422,18 +444,27 @@ async def geocode(query: str = Query(..., description="장소명")):
         )
 
     if res.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Kakao 지오코딩 오류: {res.text}")
+        raise HTTPException(status_code=502, detail=f"Kakao 검색 오류: {res.text}")
 
     docs = res.json().get("documents", [])
-    if not docs:
-        raise HTTPException(status_code=404, detail=f"'{query}' 검색 결과 없음")
+    return [
+        {
+            "name":    doc.get("place_name", query),
+            "address": doc.get("road_address_name") or doc.get("address_name", ""),
+            "lat":     float(doc["y"]),
+            "lng":     float(doc["x"]),
+        }
+        for doc in docs
+    ]
 
-    doc = docs[0]
-    return {
-        "name": doc.get("place_name", query),
-        "lat":  float(doc["y"]),
-        "lng":  float(doc["x"]),
-    }
+
+@app.get("/api/geocode")
+async def geocode(query: str = Query(..., description="장소명")):
+    """Kakao Local API 프록시 — 장소명 → 위경도 변환"""
+    results = await search(query)
+    if not results:
+        raise HTTPException(status_code=404, detail=f"'{query}' 검색 결과 없음")
+    return results[0]
 
 
 # ── 메인 길찾기 엔드포인트 ──────────────────────────────────────────────────────

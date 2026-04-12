@@ -32,7 +32,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         loadShadowLayer("12:00");
         showToast("지도를 클릭하거나 검색하여 출발지를 설정하세요!", "info");
     } catch (e) {
-        showToast("서버 연결 실패: 백엔드(8002)를 확인하세요.", "error");
+        showToast("서버 연결 실패: 백엔드(8000)를 확인하세요.", "error");
         console.error(e);
     } finally {
         showLoading(false);

@@ -9,6 +9,7 @@ let endMarker = null;
 let selected = { start: null, end: null };
 let isSidebarCollapsed = false;
 let sidebarWidth = 340;
+let isDepartNow = true;
 
 let bikeOverlays = [];
 let signalOverlays = [];
@@ -29,7 +30,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         initTimeControls();
         initSidebarResize();
 
-        loadShadowLayer("12:00");
+        applyTimeSetting(true);
         showToast("지도를 클릭하거나 검색하여 출발지를 설정하세요!", "info");
     } catch (e) {
         showToast("서버 연결 실패: 백엔드(8000)를 확인하세요.", "error");
@@ -266,7 +267,8 @@ async function findRoute() {
             body: JSON.stringify({
                 start_lat: startCoord.lat, start_lng: startCoord.lng,
                 end_lat: endCoord.lat, end_lng: endCoord.lng,
-                time_str: timeStr, mode, weight_mode: weightMode
+                time_str: timeStr, mode, weight_mode: weightMode,
+                is_depart_now: isDepartNow
             })
         });
 
@@ -357,7 +359,15 @@ function toggleSidebar() {
     document.getElementById("sidebar").classList.toggle("collapsed", isSidebarCollapsed);
     document.getElementById("map").classList.toggle("expanded", isSidebarCollapsed);
     document.getElementById("sidebar-toggle-btn").classList.toggle("collapsed", isSidebarCollapsed);
-    document.getElementById("toggle-arrow").textContent = isSidebarCollapsed ? "▶" : "◀";
+
+    if (isSidebarCollapsed) {
+        document.getElementById("map").style.left = "0px";
+        document.getElementById("sidebar-toggle-btn").style.left = "0px";
+    } else {
+        document.getElementById("map").style.left = sidebarWidth + "px";
+        document.getElementById("sidebar-toggle-btn").style.left = sidebarWidth + "px";
+    }
+
     setTimeout(() => { if (map) map.relayout(); }, 300);
 }
 
@@ -393,4 +403,56 @@ function resetAll() {
     document.getElementById("end-input").value = "";
     document.getElementById("bike-info").style.display = "none";
     showToast("초기화되었습니다.");
+}
+
+// 9. 출발 시간 설정 팝업 UI
+function toggleTimePopup() {
+    document.getElementById("time-popup").classList.toggle("hidden");
+}
+
+function toggleCustomTimeSelectors() {
+    const isCustom = document.querySelector('input[name="depart_time_type"]:checked').value === 'custom';
+    document.getElementById("custom-time-selectors").classList.toggle("hidden", !isCustom);
+}
+
+function getCurrentRoundedTime() {
+    const now = new Date();
+    let m = Math.round(now.getMinutes() / 5) * 5;
+    let h = now.getHours();
+    if (m === 60) { h += 1; m = 0; }
+    if (h >= 24) { h -= 24; }
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function applyTimeSetting(isInitial = false) {
+    const type = document.querySelector('input[name="depart_time_type"]:checked')?.value || 'now';
+    isDepartNow = (type === 'now');
+    
+    let timeStr = "";
+    if (isDepartNow) {
+        timeStr = getCurrentRoundedTime();
+    } else {
+        const h = document.getElementById("custom-hour").value;
+        const m = document.getElementById("custom-minute").value;
+        timeStr = `${h}:${m}`;
+    }
+
+    // 그림자 데이터 없는 시간대 예외 처리
+    const [hh] = timeStr.split(":").map(Number);
+    if (hh < 9 || hh > 18 || (hh === 18 && Number(timeStr.split(":")[1]) > 0)) { 
+        const fastestRadio = document.querySelector('input[name="weight"][value="fastest"]');
+        if (fastestRadio && !fastestRadio.checked) {
+            fastestRadio.checked = true;
+            if (!isInitial) showToast("선택한 시간은 그림자 데이터가 없어 최단 시간 경로로 안내합니다.", "info");
+        }
+    }
+
+    document.getElementById("time-display").value = timeStr;
+    const [ph, pm] = timeStr.split(":").map(Number);
+    const totalMins = ph * 60 + pm;
+    document.getElementById("time-slider").value = totalMins;
+    document.getElementById("temp-display").textContent = `${simulateTemperature(totalMins)}°C`;
+
+    document.getElementById("time-popup").classList.add("hidden");
+    loadShadowLayer(timeStr);
 }

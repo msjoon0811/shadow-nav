@@ -72,6 +72,53 @@
                     🔄 초기화
                 </button>
             </div>
+            <button class="btn-tertiary" id="btn-depart-time" onclick="toggleTimePopup()">
+                ⏰ 출발 시간 설정
+            </button>
+
+            <!-- Time Popup -->
+            <div id="time-popup" class="time-popup hidden">
+                <div class="time-popup-header">출발 시간 설정</div>
+                <div class="time-popup-body">
+                    <label class="time-radio-option">
+                        <input type="radio" name="depart_time_type" value="now" checked onchange="toggleCustomTimeSelectors()">
+                        <span class="time-radio-btn">🚀 지금 출발</span>
+                    </label>
+                    <label class="time-radio-option">
+                        <input type="radio" name="depart_time_type" value="custom" onchange="toggleCustomTimeSelectors()">
+                        <span class="time-radio-btn">🕰️ 시간 지정</span>
+                    </label>
+
+                    <div id="custom-time-selectors" class="custom-time-selectors hidden">
+                        <div class="select-group">
+                            <select id="custom-hour">
+                                <option value="00">00시</option><option value="01">01시</option><option value="02">02시</option><option value="03">03시</option>
+                                <option value="04">04시</option><option value="05">05시</option><option value="06">06시</option><option value="07">07시</option>
+                                <option value="08">08시</option><option value="09">09시</option><option value="10">10시</option><option value="11">11시</option>
+                                <option value="12">12시</option><option value="13">13시</option><option value="14">14시</option><option value="15">15시</option>
+                                <option value="16">16시</option><option value="17">17시</option><option value="18">18시</option><option value="19">19시</option>
+                                <option value="20">20시</option><option value="21">21시</option><option value="22">22시</option><option value="23">23시</option>
+                            </select>
+                            <select id="custom-minute">
+                                <option value="00">00분</option><option value="05">05분</option>
+                                <option value="10">10분</option><option value="15">15분</option>
+                                <option value="20">20분</option><option value="25">25분</option>
+                                <option value="30">30분</option><option value="35">35분</option>
+                                <option value="40">40분</option><option value="45">45분</option>
+                                <option value="50">50분</option><option value="55">55분</option>
+                            </select>
+                        </div>
+                        <div class="time-info-text">
+                            * 그늘 데이터는 5분 단위로 제공되어 자동 보정될 수 있습니다.<br>
+                            * 자전거는 현재 시간 기준으로 표시됩니다.
+                        </div>
+                    </div>
+                </div>
+                <div class="time-popup-footer">
+                    <button class="btn-confirm" onclick="applyTimeSetting()">확인</button>
+                    <button class="btn-cancel" onclick="toggleTimePopup()">취소</button>
+                </div>
+            </div>
         </div>
 
         <div class="control-group">

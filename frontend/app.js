@@ -14,7 +14,7 @@ let isDepartNow = true;
 let bikeOverlays = [];
 let signalOverlays = [];
 let openInfoWindow = null;
-let _shadowAbort = null; // 팀원 코드: 이전 그림자 로딩 취소용
+let _shadowAbort = null;
 
 // 1. 초기화 (백엔드에서 API 키 가져오기)
 document.addEventListener("DOMContentLoaded", async () => {

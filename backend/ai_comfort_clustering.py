@@ -13,7 +13,7 @@ if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 
 def generate_ai_clusters():
-    print("[AI 기후 분석 엔진] K-Means 쾌적도 군집화 시작...")
+    print("[K-Means] 쾌적도 군집화 시작...")
     
     # 1. 파일 경로 설정
     base_dir = os.path.dirname(os.path.dirname(__file__))
@@ -21,9 +21,9 @@ def generate_ai_clusters():
     shadow_path = os.path.join(base_dir, "data", "shadow_data", "shadow_0801_1400.geojson")
     
     # 2. 데이터 로드
-    print("👉 도로망 및 그림자 데이터 로딩 중 (14:00 기준)...")
+    print("도로망 및 그림자 데이터 로딩 중 (14:00 기준)...")
     if not os.path.exists(graph_path) or not os.path.exists(shadow_path):
-        print("❌ 기존 캐시 파일이 없습니다. 앱을 먼저 구동해 도로/그림자 데이터를 생성해주세요.")
+        print("캐시 파일이 없습니다. 앱을 먼저 구동해 도로/그림자 데이터를 생성해주세요.")
         return
         
     G = ox.load_graphml(graph_path)
@@ -32,7 +32,7 @@ def generate_ai_clusters():
     merged_shadow = shadows_gdf.geometry.union_all()
     
     # 3. 데이터 추출 (길이, 그늘 덮힘 비율 파악)
-    print("👉 수학적 공간 연산 중 (Intersection)...")
+    print("공간 연산 중 (Intersection)...")
     edge_features = []
     
     for u, v, k, data in G.edges(keys=True, data=True):
@@ -57,7 +57,7 @@ def generate_ai_clusters():
     df.fillna(0, inplace=True)
     
     # 4. 머신러닝 비지도 학습 (K-Means)
-    print("🧠 [Scikit-learn] AI 도로 쾌적도 비지도 학습 진행 중...")
+    print("[K-Means] 도로 쾌적도 군집화 진행 중...")
     # 길이와 그늘 비율 두 가지 변수를 활용해 거리를 무릅쓰고 갈 만한 길인지 3군집화
     features_for_ai = df[['length', 'shadow_percent']]
     
@@ -76,13 +76,12 @@ def generate_ai_clusters():
     df['comfort_grade'] = df['cluster'].map(grade_map)
     
     # 5. 시각화 및 결과 저장
-    print("✅ AI 분류 결과 요약:\n", df['comfort_grade'].value_counts().sort_index())
+    print("분류 결과 요약:\n", df['comfort_grade'].value_counts().sort_index())
     
     output_json = os.path.join(base_dir, "data", "ai_clusters_result.json")
     # 샘플 추출 저장을 통해 기획서 및 발표 시 모델 증빙 자료로 활용
     df[['u', 'v', 'length', 'shadow_percent', 'comfort_grade']].head(100).to_json(output_json, orient='records', force_ascii=False)
-    print(f"🎉 성공! 인공지능 분석 데이터가 파일로 추출되었습니다: {output_json}")
-    print("💡 이제 기획서에 '사전 K-Means 공간 데이터 쾌적도 검증' 파트를 자신있게 적으세요!")
+    print(f"분석 데이터 저장 완료: {output_json}")
 
 if __name__ == "__main__":
     generate_ai_clusters()

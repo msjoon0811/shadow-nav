@@ -146,8 +146,15 @@ _FOOTWAY_TAGS = {"footway", "pedestrian", "path", "steps", "living_street"}
 _FOOTWAY_BONUS = 0.7  # 보도/인도 엣지는 가중치 30% 감소 → A*가 우선 선택
 
 
-def apply_shadow_weights(G, shadow_gdf: gpd.GeoDataFrame):
+def apply_shadow_weights(G, shadow_gdf: gpd.GeoDataFrame, weight_mode: str = "balance"):
     """각 도로 엣지에 shadow_weight 속성 추가 (그늘 많을수록, 보도일수록 낮은 값)"""
+    
+    shadow_factor = 0.3
+    if weight_mode == "max_shadow":
+        shadow_factor = 0.8  # 그늘이 조금만 있어도 실제 이동 시간에 80% 단축 효과 부여 (그늘 최우선)
+    elif weight_mode == "fastest":
+        shadow_factor = 0.0  # 그림자 이점 없음 (가장 빠른 길)
+
     for u, v, k, data in G.edges(data=True, keys=True):
         length = data.get("length", 1.0)
 
@@ -165,8 +172,9 @@ def apply_shadow_weights(G, shadow_gdf: gpd.GeoDataFrame):
             highway = highway[0] if highway else ""
         is_footway = highway in _FOOTWAY_TAGS
 
-        base = travel_time * (1.0 - shadow * 0.3)
+        base = travel_time * (1.0 - shadow * shadow_factor)
         G[u][v][k]["shadow_weight"] = base * (_FOOTWAY_BONUS if is_footway else 1.0)
+        G[u][v][k]["shadow_percent"] = shadow  # K-Means 입력용
 
     return G
 
@@ -303,6 +311,116 @@ def apply_signal_penalties(G, signal_data: list[dict]):
     return G
 
 
+# ── K-Means 쾌적도 등급 ────────────────────────────────────────────────────────
+
+def apply_kmeans_comfort_grade(G, weight_mode: str = "balance"):
+    """
+    엣지별 다차원 특성으로 K-Means 쾌적도 등급 분류 후 shadow_weight에 반영.
+
+    개선 사항:
+      1. 피처 엔지니어링: shadow_percent, sunny_exposure(직사광선 노출 거리), is_footway
+      2. StandardScaler: 피처 스케일 정규화 (K-Means 유클리드 거리 왜곡 방지)
+      3. Silhouette Score 기반 최적 K 자동 선택 (K=2~5)
+      4. 등급별 가중치 배율을 최적 K에 맞춰 선형 보간
+    """
+    if weight_mode == "fastest":
+        return G
+
+    try:
+        import numpy as np
+        from sklearn.cluster import KMeans
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.metrics import silhouette_score
+    except ImportError:
+        print("[kmeans] sklearn 없음, 쾌적도 등급 생략")
+        return G
+
+    # ── 1. 피처 추출 ──────────────────────────────────────────────────────────
+    edges = list(G.edges(data=True, keys=True))
+    raw_features = []
+    for u, v, k, data in edges:
+        length      = data.get("length", 1.0)
+        shadow_pct  = data.get("shadow_percent", 0.0)
+
+        hw = data.get("highway", "")
+        if isinstance(hw, list):
+            hw = hw[0] if hw else ""
+        is_footway = 1.0 if hw in {"footway", "pedestrian", "path", "steps", "crossing", "living_street"} else 0.0
+
+        # 직사광선 노출 거리 = 도로 길이 x 비그늘 비율
+        sunny_exposure = length * (1.0 - shadow_pct)
+
+        raw_features.append([shadow_pct, sunny_exposure, is_footway])
+
+    import numpy as np
+    X = np.array(raw_features)
+
+    # 최소 엣지 수 확인
+    if len(X) < 6:
+        print("[kmeans] 엣지 수 부족, 등급 분류 생략")
+        return G
+
+    # 그림자 데이터 분산이 극히 낮으면 분류 의미 없음
+    if np.std(X[:, 0]) < 0.01:
+        print("[kmeans] 그림자 비율 분산 부족, 등급 분류 생략")
+        return G
+
+    # ── 2. 정규화 ─────────────────────────────────────────────────────────────
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    # ── 3. Silhouette Score 기반 최적 K 탐색 (2~5) ────────────────────────────
+    best_k, best_score, best_labels = 3, -1.0, None
+    max_k = min(6, len(X))
+    sample_n = min(2000, len(X_scaled))
+
+    for k_cand in range(2, max_k):
+        km = KMeans(n_clusters=k_cand, random_state=42, n_init=10)
+        labels = km.fit_predict(X_scaled)
+        if len(set(labels)) < 2:
+            continue
+        score = silhouette_score(X_scaled, labels, sample_size=sample_n, random_state=42)
+        if score > best_score:
+            best_k, best_score, best_labels = k_cand, score, labels
+
+    if best_labels is None:
+        print("[kmeans] 유효한 클러스터링 실패, 등급 분류 생략")
+        return G
+
+    # ── 4. 등급 매핑 (그림자 비율 평균 기준 내림차순) ─────────────────────────
+    cluster_shadow_sum   = {}
+    cluster_count        = {}
+    for label, feat in zip(best_labels, raw_features):
+        cluster_shadow_sum[label] = cluster_shadow_sum.get(label, 0.0) + feat[0]
+        cluster_count[label]      = cluster_count.get(label, 0) + 1
+    cluster_means = {c: cluster_shadow_sum[c] / cluster_count[c] for c in cluster_shadow_sum}
+    sorted_clusters = sorted(cluster_means, key=cluster_means.get, reverse=True)
+    grade_map = {c: rank + 1 for rank, c in enumerate(sorted_clusters)}
+
+    # ── 5. 등급별 가중치 배율 (최적 K에 맞춰 선형 보간) ──────────────────────
+    if weight_mode == "max_shadow":
+        low_mult, high_mult = 0.5, 1.8   # 그늘 최우선: 큰 보너스/패널티
+    else:
+        low_mult, high_mult = 0.8, 1.2   # 균형: 완만한 보정
+
+    multipliers = {}
+    for grade in range(1, best_k + 1):
+        t = (grade - 1) / max(best_k - 1, 1)   # 0.0 (1등급) ~ 1.0 (최하 등급)
+        multipliers[grade] = low_mult + t * (high_mult - low_mult)
+
+    # ── 6. shadow_weight에 반영 ───────────────────────────────────────────────
+    grade_counts = {g: 0 for g in range(1, best_k + 1)}
+    for (u, v, k, data), label in zip(edges, best_labels):
+        grade = grade_map[label]
+        G[u][v][k]["shadow_weight"] *= multipliers[grade]
+        G[u][v][k]["comfort_grade"] = grade
+        grade_counts[grade] += 1
+
+    grade_info = ", ".join(f"{g}등급={c}개(x{multipliers[g]:.2f})" for g, c in sorted(grade_counts.items()))
+    print(f"[kmeans] K={best_k} silhouette={best_score:.3f} | {grade_info}")
+    return G
+
+
 # ── 메인 함수 ──────────────────────────────────────────────────────────────────
 
 def calculate_optimal_shadow_route(
@@ -311,6 +429,7 @@ def calculate_optimal_shadow_route(
     signal_data: list[dict] | None = None,
     crosswalk_nodes: list[dict] | None = None,
     mode: str = "walk",
+    weight_mode: str = "balance",
 ) -> list[dict]:
     """
     카카오 경로 좌표를 받아 그늘 + 신호 패널티 기반 최적 경로를 반환.
@@ -321,6 +440,7 @@ def calculate_optimal_shadow_route(
         time_str:     그림자 계산 시간 (HH:MM)
         signal_data:  신호등 잔여시간 리스트 (없으면 패널티 미적용)
         mode:         "walk" (걷기) / "bike" (걷기+따릉이, 속도 15 km/h)
+        weight_mode:  "max_shadow" / "balance" / "fastest"
     """
     if not kakao_coords:
         return kakao_coords
@@ -343,13 +463,14 @@ def calculate_optimal_shadow_route(
         print(f"[shadow] 도로 엣지 {G.number_of_edges()}개 로드 (speed={speed_kmh} km/h)")
 
         G = assign_basic_time_weights(G, speed_kmh=speed_kmh)
-        G = apply_shadow_weights(G, shadow_gdf)
+        G = apply_shadow_weights(G, shadow_gdf, weight_mode)
 
         # OSM 그래프에서 횡단보도 노드 추출 후 서울 API 데이터와 병합
         osm_cw = extract_osm_crosswalk_nodes(G)
         merged_cw = list(crosswalk_nodes or []) + osm_cw
         print(f"[shadow] 횡단보도 노드: 서울API {len(crosswalk_nodes or [])}개 + OSM {len(osm_cw)}개 = 총 {len(merged_cw)}개")
         G = apply_crosswalk_constraints(G, merged_cw)
+        G = apply_kmeans_comfort_grade(G, weight_mode)
 
         if signal_data:
             G = apply_signal_penalties(G, signal_data)
@@ -358,16 +479,21 @@ def calculate_optimal_shadow_route(
         start_node = ox.distance.nearest_nodes(G, X=start["lng"], Y=start["lat"])
         end_node   = ox.distance.nearest_nodes(G, X=end["lng"],   Y=end["lat"])
 
-        # A* 휴리스틱: 목적지까지의 직선 거리 (위경도 유클리드 근사)
-        end_x = G.nodes[end_node]["x"]
-        end_y = G.nodes[end_node]["y"]
+        # 휴리스틱을 shadow_weight와 동일한 분(minute) 단위로 계산해 A* 적용
+        speed_mpm = speed_kmh * 1000 / 60  # m/min
 
-        def heuristic(u, _v):
-            dx = G.nodes[u]["x"] - end_x
-            dy = G.nodes[u]["y"] - end_y
-            return math.hypot(dx, dy) * 111_000  # 위도 1° ≈ 111km → 미터 환산
+        def _heuristic(u, v):
+            un, vn = G.nodes[u], G.nodes[v]
+            dlat = math.radians(vn["y"] - un["y"])
+            dlng = math.radians(vn["x"] - un["x"])
+            a = (math.sin(dlat / 2) ** 2
+                 + math.cos(math.radians(un["y"])) * math.cos(math.radians(vn["y"]))
+                 * math.sin(dlng / 2) ** 2)
+            dist_m = 6_371_000 * 2 * math.asin(math.sqrt(a))
+            return dist_m / speed_mpm
 
-        path_nodes = nx.astar_path(G, start_node, end_node, heuristic=heuristic, weight="shadow_weight")
+        path_nodes = nx.astar_path(G, source=start_node, target=end_node,
+                                   heuristic=_heuristic, weight="shadow_weight")
 
         result = [
             {"lat": G.nodes[n]["y"], "lng": G.nodes[n]["x"]}

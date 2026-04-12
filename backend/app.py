@@ -126,8 +126,9 @@ class RouteRequest(BaseModel):
     start_lng: float
     end_lat:   float
     end_lng:   float
-    time_str:  str                    = "12:00"  # 그림자 계산용 시간 (HH:MM)
+    time_str:  str = "12:00"  # 그림자 계산용 시간 (HH:MM)
     mode:      Literal["walk", "bike"] = "walk"  # "walk": 걷기 / "bike": 걷기+따릉이
+    weight_mode: Literal["max_shadow", "balance", "fastest"] = "balance"
 
 
 # ── 카카오 모빌리티 경로 API ────────────────────────────────────────────────────
@@ -298,7 +299,9 @@ async def fetch_traffic_signals(coords: list[dict]) -> list[dict]:
         return result
 
     except Exception as e:
+        import traceback
         print(f"[signal] 요청 실패 (라우팅은 계속): {e}")
+        traceback.print_exc()
         return []
 
 
@@ -355,6 +358,8 @@ async def fetch_ddareungi_stations(center_lat: float, center_lng: float) -> list
             else:
                 items = first_items
 
+        if items:
+            print(f"[ddareungi] 첫 번째 아이템 키: {list(items[0].keys())}")
         result = []
         for item in items:
             try:
@@ -511,6 +516,7 @@ async def get_route(req: RouteRequest):
         signal_data=signal_data,
         crosswalk_nodes=nearby_cw,
         mode=req.mode,
+        weight_mode=req.weight_mode,
     )
 
     # 실시간 신호 데이터를 가장 가까운 횡단보도 노드 위치로 스냅

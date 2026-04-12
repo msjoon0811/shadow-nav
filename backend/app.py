@@ -127,6 +127,7 @@ class RouteRequest(BaseModel):
     end_lat:   float
     end_lng:   float
     time_str:  str = "12:00"  # 그림자 계산용 시간 (HH:MM)
+    is_depart_now: bool = True
     mode:      Literal["walk", "bike"] = "walk"  # "walk": 걷기 / "bike": 걷기+따릉이
     weight_mode: Literal["max_shadow", "balance", "fastest"] = "balance"
 
@@ -492,13 +493,19 @@ async def get_route(req: RouteRequest):
     async def _no_ddareungi():
         return []
 
+    async def _no_signals():
+        return []
+
     lats = [c["lat"] for c in kakao_coords]
     lngs = [c["lng"] for c in kakao_coords]
     margin = 0.003
     min_lat, max_lat = min(lats) - margin, max(lats) + margin
     min_lng, max_lng = min(lngs) - margin, max(lngs) + margin
 
-    signal_task    = fetch_traffic_signals(kakao_coords)
+    signal_task = (
+        fetch_traffic_signals(kakao_coords)
+        if req.is_depart_now else _no_signals()
+    )
     ddareungi_task = (
         fetch_ddareungi_stations(req.start_lat, req.start_lng)
         if req.mode == "bike" else _no_ddareungi()

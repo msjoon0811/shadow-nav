@@ -687,3 +687,154 @@ input[type="range"]::-webkit-slider-thumb {
 .time-display-input:focus {
     border-bottom: 2px solid var(--cool-mint);
 }
+
+/* 출발 시간 설정 버튼 */
+.btn-tertiary {
+    width: 100%;
+    padding: 12px;
+    margin-top: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px dashed rgba(255, 255, 255, 0.3);
+    border-radius: 12px;
+    color: var(--white);
+    font-size: 14px;
+    font-family: 'Noto Sans KR', sans-serif;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-tertiary:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--cool-mint);
+    color: var(--cool-mint);
+}
+
+/* 출발 시간 설정 팝업 */
+.time-popup {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    margin-left: 0;
+    width: 280px;
+    background: var(--shadow-dark);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    box-shadow: 0 4px 60px rgba(0, 0, 0, 0.6);
+    z-index: 2001;
+    transform: translate(-50%, -50%);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.time-popup.hidden {
+    display: none !important;
+}
+
+.time-popup-header {
+    background: rgba(0, 0, 0, 0.2);
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--white);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.time-popup-body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.time-radio-option {
+    cursor: pointer;
+    display: block;
+}
+
+.time-radio-option input {
+    display: none;
+}
+
+.time-radio-btn {
+    display: block;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.7);
+    transition: all 0.2s ease;
+}
+
+.time-radio-option input:checked + .time-radio-btn {
+    background: rgba(0, 212, 170, 0.15);
+    border-color: var(--cool-mint);
+    color: var(--white);
+}
+
+.custom-time-selectors {
+    margin-top: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.select-group {
+    display: flex;
+    gap: 8px;
+}
+
+.custom-time-selectors select {
+    flex: 1;
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: var(--white);
+    font-size: 14px;
+    outline: none;
+    cursor: pointer;
+}
+
+.custom-time-selectors select:focus {
+    border-color: var(--cool-mint);
+}
+
+.time-info-text {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.4);
+    line-height: 1.4;
+    margin-top: 4px;
+}
+
+.time-popup-footer {
+    padding: 12px 16px;
+    background: rgba(0, 0, 0, 0.1);
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    display: flex;
+    gap: 8px;
+}
+
+.btn-confirm {
+    flex: 2;
+    padding: 10px;
+    background: var(--gradient-cool);
+    border: none;
+    border-radius: 8px;
+    color: var(--white);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.btn-cancel {
+    flex: 1;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    border-radius: 8px;
+    color: var(--white);
+    font-size: 14px;
+    cursor: pointer;
+}

@@ -26,7 +26,8 @@ SEOUL_CRSNG_URL      = "http://openapi.seoul.go.kr:8088/{key}/json/tbTraficCrsng
 KAKAO_DIRECTIONS_URL = "https://apis-navi.kakaomobility.com/v1/directions"
 KAKAO_LOCAL_URL      = "https://dapi.kakao.com/v2/local/search/keyword.json"
 SIGNAL_RT_BASE_URL   = "https://apis.data.go.kr/B551982/rti"
-DDAREUNGI_API_URL    = "https://apis.data.go.kr/B551982/pbdo_v2/inf_101_00010002_v2"
+DDAREUNGI_STATIC_URL  = "https://apis.data.go.kr/B551982/pbdo_v2/inf_101_00010001_v2"
+DDAREUNGI_RT_URL      = "https://apis.data.go.kr/B551982/pbdo_v2/inf_101_00010002_v2"
 
 # 교차로 좌표 캐시 {crsrdId: {"lat": float, "lng": float, "name": str}}
 _crsrd_coord_cache: dict[str, dict] = {}
@@ -310,59 +311,54 @@ async def fetch_traffic_signals(coords: list[dict]) -> list[dict]:
 
 async def fetch_ddareungi_stations(center_lat: float, center_lng: float) -> list[dict]:
     """
-    따릉이 대여소 전체 목록 조회 후 출발지 반경 1km 이내만 필터링.
-    API 키 미설정 시 빈 리스트 반환.
+    inf_101_00010001 (정적) + inf_101_00010002 (실시간) 합쳐서 반환.
+    정적 API로 전체 대여소 위치 확보, 실시간 API로 가용 대수 매칭 (없으면 0).
+    출발지 반경 ~1km 필터링.
 
     반환 형태:
-      [{"name": str, "lng": float, "lat": float, "available": int}, ...]
+      [{"name": str, "lat": float, "lng": float, "available": int}, ...]
     """
     if not DDAREUNGI_API_KEY:
         return []
 
     PAGE_SIZE = 1000
 
-    async def _fetch_page(client: httpx.AsyncClient, page: int) -> list:
-        params = {
-            "serviceKey": DDAREUNGI_API_KEY,
-            "pageNo":     page,
-            "numOfRows":  PAGE_SIZE,
-            "type":       "json",
-        }
-        res = await client.get(DDAREUNGI_API_URL, params=params)
+    async def _fetch_all(client: httpx.AsyncClient, url: str) -> list:
+        params = {"serviceKey": DDAREUNGI_API_KEY, "pageNo": 1, "numOfRows": PAGE_SIZE, "type": "json"}
+        res = await client.get(url, params=params)
         if res.status_code != 200:
             return []
-        return res.json().get("body", {}).get("item", [])
+        body = res.json().get("body", {})
+        items = body.get("item", [])
+        total = body.get("totalCount", 0)
+        total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+        if total_pages > 1:
+            async def _page(p):
+                r = await client.get(url, params={**params, "pageNo": p})
+                return r.json().get("body", {}).get("item", []) if r.status_code == 200 else []
+            rest = await asyncio.gather(*[_page(p) for p in range(2, total_pages + 1)])
+            items += [i for page in rest for i in page]
+        return items
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            # 1페이지로 전체 수 확인
-            first_params = {
-                "serviceKey": DDAREUNGI_API_KEY,
-                "pageNo":     1,
-                "numOfRows":  PAGE_SIZE,
-                "type":       "json",
-            }
-            res = await client.get(DDAREUNGI_API_URL, params=first_params)
-            if res.status_code != 200:
-                print(f"[ddareungi] API 오류 {res.status_code}")
-                return []
-            first_data = res.json()
-            total = first_data.get("body", {}).get("totalCount", 0)
-            first_items = first_data.get("body", {}).get("item", [])
+            static_items, rt_items = await asyncio.gather(
+                _fetch_all(client, DDAREUNGI_STATIC_URL),
+                _fetch_all(client, DDAREUNGI_RT_URL),
+            )
 
-            # 나머지 페이지 병렬 호출
-            total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
-            if total_pages > 1:
-                tasks = [_fetch_page(client, p) for p in range(2, total_pages + 1)]
-                rest = await asyncio.gather(*tasks)
-                items = first_items + [i for page in rest for i in page]
-            else:
-                items = first_items
+        # 실시간 가용 대수 맵 {rntstnId: available}
+        rt_map = {}
+        for item in rt_items:
+            sid = item.get("rntstnId")
+            if sid:
+                try:
+                    rt_map[sid] = int(item.get("bcyclTpkctNocs", 0))
+                except (ValueError, TypeError):
+                    rt_map[sid] = 0
 
-        if items:
-            print(f"[ddareungi] 첫 번째 아이템 키: {list(items[0].keys())}")
         result = []
-        for item in items:
+        for item in static_items:
             try:
                 s_lat = float(item["lat"])
                 s_lng = float(item["lot"])
@@ -371,16 +367,17 @@ async def fetch_ddareungi_stations(center_lat: float, center_lng: float) -> list
                 if abs(s_lat - center_lat) > 0.009 or abs(s_lng - center_lng) > 0.012:
                     continue
 
+                sid = item.get("rntstnId", "")
                 result.append({
                     "name":      item.get("rntstnNm", ""),
                     "lat":       s_lat,
                     "lng":       s_lng,
-                    "available": int(item.get("bcyclTpkctNocs", 0)),
+                    "available": rt_map.get(sid, 0),
                 })
             except (KeyError, ValueError):
                 continue
 
-        print(f"[ddareungi] 반경 내 따릉이 대여소 {len(result)}개")
+        print(f"[ddareungi] 정적 {len(static_items)}개 / 실시간 {len(rt_map)}개 / 반경 내 {len(result)}개")
         return result
 
     except Exception as e:
